@@ -6,7 +6,6 @@ from typing import Optional, Literal
 
 from pydantic import ValidationError
 
-from utils.tool_utils import make_tool_response
 from config import (
     NAMESPACE,
     LOG_FETCH_BUFFER,
@@ -15,6 +14,7 @@ from config import (
     DEFAULT_LOG_LEVEL,
     VALID_SERVICES,
 )
+from utils.tool_utils import make_tool_response
 from utils.k8s_utils import core_v1_api, get_pod
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,10 @@ def _fetch_and_filter(
     Fetch LOG_FETCH_BUFFER raw lines from the K8s Logs API, parse as
     JSON, filter by level, truncate to requested_lines.
 
+    Spring Boot ECS structured logging writes severity to the dotted key
+    "log.level" (per Elastic Common Schema). A fallback to "level" is
+    retained for any non-ECS services.
+
     Non-JSON lines (JVM banner, raw stack trace fragments) are included
     as {"raw": "<line>", "level": "UNKNOWN"} so the agent can see them.
 
@@ -143,9 +147,6 @@ def _fetch_and_filter(
             previous=previous,
         )
     except Exception as e:
-        # K8s returns 400 Bad Request when previous=True and the pod
-        # hasn't restarted, or when the log buffer has been recycled.
-        # This is expected — return empty quietly.
         logger.debug(
             f"Could not fetch {'previous' if previous else 'current'} logs "
             f"for pod '{pod_name}': {e}")
@@ -163,7 +164,9 @@ def _fetch_and_filter(
 
         try:
             entry = json.loads(line)
-            line_level = str(entry.get("level", "")).upper()
+
+            line_level = str(entry.get("log.level")
+                             or entry.get("level", "")).upper()
 
             if line_level in LOG_LEVEL_HIERARCHY:
                 if LOG_LEVEL_HIERARCHY.index(line_level) >= min_level_index:
