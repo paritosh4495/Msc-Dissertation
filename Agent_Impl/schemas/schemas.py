@@ -1,6 +1,6 @@
 
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Dict
 from pydantic import BaseModel, Field
 
 # 1. Tool Response 
@@ -11,9 +11,11 @@ class ToolResponse(BaseModel):
     Every tool returns a ToolResponse — never raises an exception to the agent.
     Failures are communicated via status='error' and error_message.
     """
-    tool:          str
-    status:        Literal["success", "error"]
-    data:          dict[str, Any]               = Field(default_factory=dict)
+    tool:          str = Field(..., description="Name of the tool that generated this response.")
+    status:        Literal["success", "error"] = Field(..., description=(
+        "Execution status."
+    ))
+    data:          dict[str, Any]               = Field(default_factory=dict, description="Tool output payload.")
     service:       Optional[str]                = None
     timestamp_utc: str                          = Field(
                        default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -30,18 +32,19 @@ class DiagnosisSubmission(BaseModel):
     Scored against ground truth immediately after session completion.
     """
     service:    Literal["inventory-service", "order-service", "payment-service"] = Field(..., description=(
-        "Root cause service. One of: inventory-service, order-service, payment-service."
+        "Root cause service."
     ))
     component:  Literal["hikari-connection-pool", "cpu", "resilience4j-circuit-breaker", "tomcat-thread-pool", "jvm-heap", "kubernetes-pod"] = Field(..., description=(
-        "Specific component. One of: hikari-connection-pool, cpu, "
-        "resilience4j-circuit-breaker, tomcat-thread-pool, jvm-heap, kubernetes-pod."
+        "Specific component at fault"
     ))
     fault_type: Literal["connection-pool-starvation", "cpu-saturation", "circuit-breaker-open", "thread-pool-exhaustion", "memory-leak", "pod-oomkill"] = Field(..., description=(
-        "Fault classification. One of: connection-pool-starvation, cpu-saturation, "
-        "circuit-breaker-open, thread-pool-exhaustion, memory-leak, pod-oomkill."
+        "Fault classification"
     ))
     evidence:   str = Field(..., min_length=10, description=(
         "Concise summary of evidence supporting this diagnosis."
+    ))
+    no_fault_detected: bool = Field(default=False, description=(
+        "True if the agent concluded no fault exists in the sytesm after thorough investigation. When True, service/component/fault_type reflect the agent's best guess or are irrelevant — the key signal is no_fault_detected=True."
     ))
 
 # # 3. Scoring Result

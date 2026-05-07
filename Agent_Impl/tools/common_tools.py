@@ -1,9 +1,8 @@
-
 # Tools shared across both observability conditions.
 
 import json
 import logging
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import ValidationError
 
@@ -29,11 +28,10 @@ def get_application_logs(
     level: Optional[str] = None,
 ) -> ToolResponse:
     """
-    Return recent application log lines from a service pod.
-
-    If the pod has restarted (e.g. after an OOMKill), previous container
-    logs are also fetched and returned under 'previous_logs'. These are
-    the logs from the terminated container and may contain the crash reason.
+    Returns recent log lines from a service pod filtered by level.
+    level options: DEBUG, INFO, WARN, ERROR (default WARN).
+    If the pod has restarted, previous container logs are also returned
+    under previous_logs — use these to find OOMKill or crash reasons.
     """
     tool_name = "get_application_logs"
 
@@ -192,51 +190,115 @@ def _fetch_and_filter(
 # submit_diagnosis
 
 
-
 def submit_diagnosis(
-    service: str,
-    component: str,
-    fault_type: str,
+    service: Literal[
+        "inventory-service",
+        "order-service",
+        "payment-service",
+    ],
+    component: Literal[
+        "hikari-connection-pool",
+        "cpu",
+        "resilience4j-circuit-breaker",
+        "tomcat-thread-pool",
+        "jvm-heap",
+        "kubernetes-pod",
+    ],
+    fault_type: Literal[
+        "connection-pool-starvation",
+        "cpu-saturation",
+        "circuit-breaker-open",
+        "thread-pool-exhaustion",
+        "memory-leak",
+        "pod-oomkill",
+    ],
     evidence: str,
+    no_fault_detected: bool = False,
 ) -> ToolResponse:
     """
-    Submit the agent's final diagnosis. This is the terminal action.
+    Submit your final diagnosis. This ends the session.
+    Call when you have clear evidence of the root cause, or set
+    no_fault_detected=True if all services are confirmed healthy.
     """
-    tool_name = "submit_diagnosis"
+    logger.info(f"[submit_diagnosis] service={service} component={component} "
+                f"fault_type={fault_type} no_fault={no_fault_detected}")
 
-    try:
-        submission = DiagnosisSubmission(
-            service=service,
-            component=component,
-            fault_type=fault_type,
-            evidence=evidence,
-        )
+    # Validate evidence length
+    if not evidence or len(evidence.strip()) < 10:
         return ToolResponse(
-            tool=tool_name,
-            status="success",
-            service=submission.service,
-            data={
-                "submitted": True,
-                "service": submission.service,
-                "component": submission.component,
-                "fault_type": submission.fault_type,
-                "evidence": submission.evidence,
-            },
-        )
-
-    except ValidationError as e:
-        # Return errors to the agent — it can reason and resubmit.
-        return ToolResponse(
-            tool=tool_name,
+            tool="submit_diagnosis",
             status="error",
-            service=service,
-            error_message=f"Validation failed — {e.errors()}",
+            error="evidence must be at least 10 characters.",
         )
 
-    except Exception as e:
-        logger.exception(f"[{tool_name}] Unexpected error")
-        return ToolResponse(
-            tool=tool_name,
-            status="error",
-            error_message=f"Unexpected error: {e}",
-        )
+    # Construct the internal record
+    submission = DiagnosisSubmission(
+        service=service,
+        component=component,
+        fault_type=fault_type,
+        evidence=evidence.strip(),
+        no_fault_detected=no_fault_detected,
+    )
+
+    return ToolResponse(
+        tool="submit_diagnosis",
+        status="success",
+        service=submission.service,  # top-level service field
+        data={
+            "submitted": True,
+            "no_fault_detected": submission.no_fault_detected,
+            "service": submission.service,
+            "component": submission.component,
+            "fault_type": submission.fault_type,
+            "evidence": submission.evidence,
+        },
+    )
+
+
+# def submit_diagnosis(
+#     service: str,
+#     component: str,
+#     fault_type: str,
+#     evidence: str,
+# ) -> ToolResponse:
+#     """
+#     Submit the agent's final diagnosis. This is the terminal action.
+#     """
+#     tool_name = "submit_diagnosis"
+
+#     try:
+#         submission = DiagnosisSubmission(
+#             service=service,
+#             component=component,
+#             fault_type=fault_type,
+#             evidence=evidence,
+#         )
+#         return ToolResponse(
+#             tool=tool_name,
+#             status="success",
+#             service=submission.service,
+#             data={
+#                 "submitted": True,
+#                 "service": submission.service,
+#                 "component": submission.component,
+#                 "fault_type": submission.fault_type,
+#                 "evidence": submission.evidence,
+#             },
+#         )
+
+#     except ValidationError as e:
+#         # Return errors to the agent — it can reason and resubmit.
+#         return ToolResponse(
+#             tool=tool_name,
+#             status="error",
+#             service=service,
+#             error_message=f"Validation failed — {e.errors()}",
+#         )
+
+#     except Exception as e:
+#         logger.exception(f"[{tool_name}] Unexpected error")
+#         return ToolResponse(
+#             tool=tool_name,
+#             status="error",
+#             error_message=f"Unexpected error: {e}",
+#         )

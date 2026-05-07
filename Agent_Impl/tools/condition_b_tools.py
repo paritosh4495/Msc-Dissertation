@@ -23,7 +23,9 @@ _CB_SUCCESS_KEEP = 5
 
 def get_service_health_b(service: str) -> ToolResponse:
     """
-    Return the full Spring Boot Actuator health hierarchy for a service.
+    Returns the full Spring Boot Actuator health hierarchy including all
+    component statuses (db, hikariPool, diskSpace, etc.) with their details.
+    Use this first to identify which service is degraded.
     """
     tool_name = "get_service_health_b"
 
@@ -64,41 +66,11 @@ def query_actuator_metrics(
 ) -> ToolResponse:
     """
     Query Spring Boot Actuator metrics for a service.
-
-    When called without metric_name, returns the full list of available
-    metric names. Use this first if you are unsure which metrics exist,
-    then call again with a specific metric_name to get its value.
-
-    When called with metric_name, returns the current measurement(s)
-    for that metric including value, statistic type, and available tags.
-    Call repeatedly across reasoning steps to observe trends — each
-    call is a fresh independent sample.
-
-    Commonly useful metric names for fault diagnosis:
-
-      HikariCP connection pool:
-        hikaricp.connections.active   — currently acquired connections
-        hikaricp.connections.pending  — threads waiting for a connection
-        hikaricp.connections.max      — pool size ceiling
-        hikaricp.connections.timeout  — cumulative acquisition timeouts
-
-      JVM memory (use tag: area=heap or area=nonheap):
-        jvm.memory.used               — bytes currently used
-        jvm.memory.max                — maximum heap size
-
-      JVM threads:
-        jvm.threads.live              — current live thread count
-        jvm.threads.peak              — peak since JVM start
-        jvm.threads.states            — breakdown by state (use tag: state=...)
-          thread state tag values: runnable, blocked, waiting, timed-waiting
-
-      CPU:
-        process.cpu.usage             — JVM process CPU (0.0–1.0)
-        system.cpu.usage              — host CPU (0.0–1.0)
-
-      HTTP:
-        http.server.requests          — request count/time by uri and status
-          use tags: uri=..., status=..., outcome=...
+    Call without metric_name to list all available metric names.
+    Call with metric_name to get its current value and available tags.
+    Key metrics: hikaricp.connections.active/pending/timeout, jvm.memory.used,
+    jvm.threads.live, process.cpu.usage, resilience4j.circuitbreaker.state.
+    Not all metrics are available on all services.
     """
     tool_name = "query_actuator_metrics"
 
@@ -168,8 +140,10 @@ def query_actuator_metrics(
 
 def get_circuit_breaker_state(service: str) -> ToolResponse:
     """
-    Return the current Resilience4j circuit breaker state and recent
-    event history for a service.
+    Returns Resilience4j circuit breaker state (CLOSED/OPEN/HALF_OPEN),
+    failure rate, and recent event history prioritising STATE_TRANSITION
+    and ERROR events. Use when a service shows elevated failure rates
+    or upstream call errors.
     """
     tool_name = "get_circuit_breaker_state"
 

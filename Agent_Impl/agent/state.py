@@ -13,13 +13,12 @@ from langgraph.graph.message import add_messages
 
 
 _DEFAULT_FAULT_SCENARIO = (
-    "A fault has been injected into the bookstore microservice testbed. "
-    "One or more services may be degraded or failing. "
-    "Use your available tools to investigate and identify the root cause. "
-    "When you are confident in your diagnosis, call submit_diagnosis with "
-    "your findings."
+    "Investigate the bookstore microservice testbed. "
+    "Check the health and performance of all services. "
+    "Identify any faults or anomalies if present. "
+    "When you have completed your investigation, call submit_diagnosis "
+    "with your findings. If all services are healthy, set no_fault_detected=True."
 )
-
 
 class AgentState(TypedDict):
     """

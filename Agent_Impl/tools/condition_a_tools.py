@@ -25,16 +25,15 @@ from utils.k8s_utils import (
 
 logger = logging.getLogger(__name__)
 
-
 # Tool 1 — get_service_health_a
+
 
 def get_service_health_a(service: str) -> ToolResponse:
     """
-    Return the Kubernetes-layer health status for a service.
-    Returns pod_phase, ready (bool), restart_count, and a derived
-    status_summary (UP / DEGRADED / DOWN).
-
+    Returns Kubernetes pod health: phase, readiness, restart count,
+    and a status_summary of UP / DEGRADED / DOWN.
     This is a point-in-time snapshot of pod state at the moment of the call.
+    Use this first to identify which service is degraded.
     """
     tool_name = "get_service_health_a"
 
@@ -43,7 +42,8 @@ def get_service_health_a(service: str) -> ToolResponse:
             tool=tool_name,
             status="error",
             service=service,
-            error_message=f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
+            error_message=
+            f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
         )
 
     try:
@@ -54,7 +54,8 @@ def get_service_health_a(service: str) -> ToolResponse:
                 tool=tool_name,
                 status="error",
                 service=service,
-                error_message=f"No pod found for service '{service}' in namespace '{NAMESPACE}'.",
+                error_message=
+                f"No pod found for service '{service}' in namespace '{NAMESPACE}'.",
             )
 
         # --- Extract phase ---
@@ -88,16 +89,17 @@ def get_service_health_a(service: str) -> ToolResponse:
             status="success",
             service=service,
             data={
-                "status_summary":  status_summary,
-                "pod_phase":       pod_phase,
-                "ready":           ready,
-                "restart_count":   restart_count,
-                "pod_name":        pod.metadata.name,
+                "status_summary": status_summary,
+                "pod_phase": pod_phase,
+                "ready": ready,
+                "restart_count": restart_count,
+                "pod_name": pod.metadata.name,
             },
         )
 
     except Exception as e:
-        logger.exception(f"[{tool_name}] Unexpected error for service '{service}'")
+        logger.exception(
+            f"[{tool_name}] Unexpected error for service '{service}'")
         return ToolResponse(
             tool=tool_name,
             status="error",
@@ -108,11 +110,12 @@ def get_service_health_a(service: str) -> ToolResponse:
 
 # Tool 2 — get_resource_metrics
 
+
 def get_resource_metrics(service: str) -> ToolResponse:
     """
-    Return a point-in-time CPU and memory snapshot for a service pod,
-    expressed as percentages of the pod's configured resource limits.
-
+    Returns current CPU and memory usage as percentages of configured
+    pod limits. Use to confirm CPU saturation or memory pressure.
+    Point-in-time snapshot — call repeatedly to observe trends.
     """
     tool_name = "get_resource_metrics"
 
@@ -121,7 +124,8 @@ def get_resource_metrics(service: str) -> ToolResponse:
             tool=tool_name,
             status="error",
             service=service,
-            error_message=f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
+            error_message=
+            f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
         )
 
     try:
@@ -152,44 +156,53 @@ def get_resource_metrics(service: str) -> ToolResponse:
                 error_message="Metrics Server returned no container data.",
             )
 
-        usage       = containers[0]["usage"]
-        cpu_raw     = usage.get("cpu", "0m")
-        memory_raw  = usage.get("memory", "0Ki")
+        usage = containers[0]["usage"]
+        cpu_raw = usage.get("cpu", "0m")
+        memory_raw = usage.get("memory", "0Ki")
 
         # --- Parse to canonical units ---
-        cpu_millicores    = parse_cpu_to_millicores(cpu_raw)
-        memory_bytes      = parse_memory_to_bytes(memory_raw)
+        cpu_millicores = parse_cpu_to_millicores(cpu_raw)
+        memory_bytes = parse_memory_to_bytes(memory_raw)
 
         # --- Retrieve limits from config (sourced from manifests) ---
-        limits            = POD_RESOURCE_LIMITS[service]
-        cpu_limit_mc      = limits["cpu_millicores"]
-        memory_limit_b    = limits["memory_bytes"]
+        limits = POD_RESOURCE_LIMITS[service]
+        cpu_limit_mc = limits["cpu_millicores"]
+        memory_limit_b = limits["memory_bytes"]
 
         # --- Compute percentages, guard against division by zero ---
-        cpu_pct    = round((cpu_millicores / cpu_limit_mc)    * 100, 2) if cpu_limit_mc    > 0 else 0.0
-        memory_pct = round((memory_bytes   / memory_limit_b)  * 100, 2) if memory_limit_b  > 0 else 0.0
+        cpu_pct = round((cpu_millicores / cpu_limit_mc) *
+                        100, 2) if cpu_limit_mc > 0 else 0.0
+        memory_pct = round((memory_bytes / memory_limit_b) *
+                           100, 2) if memory_limit_b > 0 else 0.0
 
         return ToolResponse(
             tool=tool_name,
             status="success",
             service=service,
             data={
-                "cpu_percent":          cpu_pct,
-                "memory_percent":       memory_pct,
-                "cpu_millicores_used":  cpu_millicores,
-                "memory_bytes_used":    memory_bytes,
-                "cpu_limit_millicores": cpu_limit_mc,
-                "memory_limit_bytes":   memory_limit_b,
-                "pod_name":             pod_name,
-                "note": (
-                    "Point-in-time snapshot with ~15s Metrics Server scrape lag. "
-                    "Call repeatedly to observe trends."
-                ),
+                "cpu_percent":
+                cpu_pct,
+                "memory_percent":
+                memory_pct,
+                "cpu_millicores_used":
+                cpu_millicores,
+                "memory_bytes_used":
+                memory_bytes,
+                "cpu_limit_millicores":
+                cpu_limit_mc,
+                "memory_limit_bytes":
+                memory_limit_b,
+                "pod_name":
+                pod_name,
+                "note":
+                ("Point-in-time snapshot with ~15s Metrics Server scrape lag. "
+                 "Call repeatedly to observe trends."),
             },
         )
 
     except Exception as e:
-        logger.exception(f"[{tool_name}] Unexpected error for service '{service}'")
+        logger.exception(
+            f"[{tool_name}] Unexpected error for service '{service}'")
         return ToolResponse(
             tool=tool_name,
             status="error",
@@ -200,9 +213,12 @@ def get_resource_metrics(service: str) -> ToolResponse:
 
 # Tool 3 — get_pod_events
 
+
 def get_pod_events(service: str) -> ToolResponse:
     """
-    Return recent Kubernetes events for the service's pod(s).
+    Returns recent Kubernetes events for the service pod, sorted with
+    Warning events first. Use to detect OOMKill, restarts, and
+    scheduling failures.
     
     """
     tool_name = "get_pod_events"
@@ -212,19 +228,17 @@ def get_pod_events(service: str) -> ToolResponse:
             tool=tool_name,
             status="error",
             service=service,
-            error_message=f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
+            error_message=
+            f"Unknown service '{service}'. Valid services: {sorted(VALID_SERVICES)}",
         )
 
     try:
-        events = core_v1_api().list_namespaced_event(
-            namespace=NAMESPACE,
-        )
+        events = core_v1_api().list_namespaced_event(namespace=NAMESPACE, )
 
         # Filter to Pod-kind events whose name starts with the service name.
         # This captures both current and recently terminated pods.
         relevant = [
-            e for e in events.items
-            if e.involved_object.kind == "Pod"
+            e for e in events.items if e.involved_object.kind == "Pod"
             and e.involved_object.name.startswith(service)
         ]
 
@@ -252,12 +266,18 @@ def get_pod_events(service: str) -> ToolResponse:
         for e in relevant:
             last_ts = e.last_timestamp or e.event_time
             serialised.append({
-                "type":         e.type,
-                "reason":       e.reason,
-                "message":      e.message,
-                "count":        e.count,
-                "last_seen":    last_ts.strftime("%Y-%m-%dT%H:%M:%SZ") if last_ts else None,
-                "pod_name":     e.involved_object.name,
+                "type":
+                e.type,
+                "reason":
+                e.reason,
+                "message":
+                e.message,
+                "count":
+                e.count,
+                "last_seen":
+                last_ts.strftime("%Y-%m-%dT%H:%M:%SZ") if last_ts else None,
+                "pod_name":
+                e.involved_object.name,
             })
 
         return ToolResponse(
@@ -266,12 +286,13 @@ def get_pod_events(service: str) -> ToolResponse:
             service=service,
             data={
                 "event_count": len(serialised),
-                "events":      serialised,
+                "events": serialised,
             },
         )
 
     except Exception as e:
-        logger.exception(f"[{tool_name}] Unexpected error for service '{service}'")
+        logger.exception(
+            f"[{tool_name}] Unexpected error for service '{service}'")
         return ToolResponse(
             tool=tool_name,
             status="error",
