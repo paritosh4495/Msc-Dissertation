@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 def get_application_logs(
     service: str,
-    last_n_lines: int = 50,
     level: Optional[str] = None,
 ) -> dict:
     """
@@ -54,7 +53,7 @@ def get_application_logs(
     min_level_index = LOG_LEVEL_HIERARCHY.index(resolved_level)
 
     # --- Cap last_n_lines ---
-    requested_lines = min(max(1, last_n_lines), MAX_LOG_LINES)
+    requested_lines = MAX_LOG_LINES
 
     try:
         pod = get_pod(service, NAMESPACE)

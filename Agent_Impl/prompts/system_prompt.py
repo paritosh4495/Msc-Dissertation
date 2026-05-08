@@ -15,16 +15,11 @@ def build_system_prompt(condition: str) -> str:
     the LLM receives full tool schemas via the API tools field.
     """
     if condition not in VALID_CONDITIONS:
-        raise ValueError(
-            f"Invalid condition '{condition}'. "
-            f"Must be one of: {sorted(VALID_CONDITIONS)}"
-        )
+        raise ValueError(f"Invalid condition '{condition}'. "
+                         f"Must be one of: {sorted(VALID_CONDITIONS)}")
 
-    layer = (
-        "generic Kubernetes infrastructure observability"
-        if condition == "A"
-        else "framework-native Spring Boot Actuator observability"
-    )
+    layer = ("generic Kubernetes infrastructure observability" if condition
+             == "A" else "framework-native Spring Boot Actuator observability")
 
     return f"""You are an expert Site Reliability Engineer (SRE) diagnosing \
 faults in a Spring Boot microservice testbed called the Bookstore Testbed.
@@ -41,6 +36,7 @@ order-service. payment-service does not have a database.
 
 ## Investigation Strategy
 - Check the health of each service first to identify which is degraded.
+- You may call tools in parallel to check multiple services at once, but do not delay diagnosis by \checking all services if you find a degraded one early.
 - Once you find a degraded service, focus all investigation on it.
 - Do not re-check services already confirmed healthy.
 - When you have clear evidence, call submit_diagnosis immediately.

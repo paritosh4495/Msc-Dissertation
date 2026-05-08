@@ -83,7 +83,7 @@ def build_agent(condition: str) -> tuple[CompiledStateGraph, str]:
 
     # Bind tools to model — injects tool schemas into every API call.
     # The LLM uses these schemas to decide when and how to call tools.
-    model_with_tools = model.bind_tools(tools, parallel_tool_calls=False)
+    model_with_tools = model.bind_tools(tools)
 
     # --- Node functions ---
     agent_node = make_agent_node(model_with_tools)
