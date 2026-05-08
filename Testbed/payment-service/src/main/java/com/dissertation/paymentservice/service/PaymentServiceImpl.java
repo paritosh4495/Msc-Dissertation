@@ -20,8 +20,8 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     public PaymentResponse authorize(PaymentRequest request) {
         if (f3Fault.isActive()) {
-            log.error("F3 Fault active: Forcing payment failure for order {}", request.getOrderNumber());
-            throw new RuntimeException("F3 Fault injected: Forced Payment Failure");
+            log.error("Payment authorization failed for order {}: downstream provider timeout", request.getOrderNumber());
+            throw new RuntimeException("Payment authorization failed: downstream service unavailable");
         }
 
         log.info("Processing authorization for order {} and customer {} with amount {}", 

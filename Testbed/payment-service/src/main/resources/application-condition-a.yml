@@ -8,6 +8,7 @@ logging:
 
     # Hide experiment/fault-injection internals
     com.dissertation.paymentservice.fault: ERROR
+    com.dissertation.paymentservice.web.FaultController: ERROR
 
     # Narrow suppression of framework-native observability leakage
     org.springframework.boot.actuate: WARN

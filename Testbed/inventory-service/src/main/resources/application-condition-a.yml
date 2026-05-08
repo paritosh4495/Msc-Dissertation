@@ -8,6 +8,7 @@ logging:
 
     # Hide experiment/fault-injection internals
     com.dissertation.inventoryservice.fault: ERROR
+    com.dissertation.inventoryservice.web.FaultController: ERROR
 
 
 
