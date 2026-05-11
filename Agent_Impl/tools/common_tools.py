@@ -1,4 +1,4 @@
-# Tools shared across both observability conditions.
+# Diagnostic tools shared across both observability conditions.
 
 import json
 import logging
@@ -19,18 +19,17 @@ from utils.k8s_utils import core_v1_api, get_pod
 
 logger = logging.getLogger(__name__)
 
-# get_application_logs
-
 
 def get_application_logs(
     service: str,
     level: Optional[str] = None,
 ) -> dict:
     """
-    Returns recent log lines from a service pod filtered by level.
-    level options: DEBUG, INFO, WARN, ERROR (default WARN).
-    If the pod has restarted, previous container logs are also returned
-    under previous_logs — use these to find OOMKill or crash reasons.
+    Retrieves recent application logs for a specified service, filtered by severity level.
+    Use this to inspect runtime errors, exceptions, or unexpected application behavior.
+    Supported levels: DEBUG, INFO, WARN, ERROR (defaults to WARN).
+    If the service pod has restarted, logs from the previous container instance are 
+    included in 'previous_logs', which is critical for diagnosing OOMKills or fatal crashes.
     """
     tool_name = "get_application_logs"
 
@@ -43,7 +42,7 @@ def get_application_logs(
                            f"Valid services: {sorted(VALID_SERVICES)}"),
         )
 
-    # --- Resolve and validate level ---
+    # Resolve and validate level; fallback to DEFAULT_LOG_LEVEL if unknown
     resolved_level = (level or DEFAULT_LOG_LEVEL).upper().strip()
     if resolved_level not in LOG_LEVEL_HIERARCHY:
         logger.warning(f"[{tool_name}] Unrecognised log level '{level}'. "
@@ -51,8 +50,6 @@ def get_application_logs(
         resolved_level = DEFAULT_LOG_LEVEL
 
     min_level_index = LOG_LEVEL_HIERARCHY.index(resolved_level)
-
-    # --- Cap last_n_lines ---
     requested_lines = MAX_LOG_LINES
 
     try:
@@ -70,7 +67,7 @@ def get_application_logs(
         if pod.status.container_statuses:
             restart_count = pod.status.container_statuses[0].restart_count or 0
 
-        # --- Current container logs ---
+        # Fetch current logs
         current = _fetch_and_filter(
             pod_name=pod_name,
             namespace=NAMESPACE,
@@ -79,7 +76,7 @@ def get_application_logs(
             previous=False,
         )
 
-        # --- Previous container logs (only if pod has restarted) ---
+        # Fetch previous logs if the pod has restarted
         previous: Optional[dict] = None
         if restart_count > 0:
             previous = _fetch_and_filter(
@@ -126,17 +123,9 @@ def _fetch_and_filter(
     previous: bool,
 ) -> dict:
     """
-    Fetch LOG_FETCH_BUFFER raw lines from the K8s Logs API, parse as
-    JSON, filter by level, truncate to requested_lines.
-
-    Spring Boot ECS structured logging writes severity to the dotted key
-    "log.level" (per Elastic Common Schema). A fallback to "level" is
-    retained for any non-ECS services.
-
-    Non-JSON lines (JVM banner, raw stack trace fragments) are included
-    as {"raw": "<line>", "level": "UNKNOWN"} so the agent can see them.
-
-    Returns {"lines": list, "truncated": bool}.
+    Internal helper to fetch, parse, and filter K8s logs.
+    Handles ECS-formatted structured logs and falls back to 'level' key.
+    Raw lines (banners, stack trace fragments) are included as 'UNKNOWN' to avoid data loss.
     """
     try:
         raw_log = core_v1_api().read_namespaced_pod_log(
@@ -164,6 +153,7 @@ def _fetch_and_filter(
         try:
             entry = json.loads(line)
 
+            # Extract log level from ECS dotted key or standard 'level' key
             line_level = str(entry.get("log.level")
                              or entry.get("level", "")).upper()
 
@@ -171,25 +161,20 @@ def _fetch_and_filter(
                 if LOG_LEVEL_HIERARCHY.index(line_level) >= min_level_index:
                     parsed.append(entry)
             else:
-                # Level field missing or unrecognised.
-                # Include only when filtering at WARN or below to avoid noise.
+                # Include unrecognised levels for lower thresholds to capture potential issues
                 if min_level_index <= LOG_LEVEL_HIERARCHY.index("WARN"):
                     parsed.append(entry)
 
         except (json.JSONDecodeError, ValueError):
-            # Non-JSON line — JVM banner, raw exception fragment, etc.
-            # Include as raw so the agent is not blind to it.
+            # Include non-JSON content as raw lines to ensure visibility of banners/exceptions
             parsed.append({"raw": line, "level": "UNKNOWN"})
 
-    # Truncate to requested_lines — keep the most recent (tail of list)
+    # Truncate to the most recent lines
     truncated = len(parsed) > requested_lines
     if truncated:
         parsed = parsed[-requested_lines:]
 
     return {"lines": parsed, "truncated": truncated}
-
-
-# submit_diagnosis
 
 
 def submit_diagnosis(
@@ -207,14 +192,17 @@ def submit_diagnosis(
                                  "pod-oomkill"]] = None,
 ) -> dict:
     """
-    Submit your final diagnosis. This ends the session.
-    Call when you have clear evidence of the root cause, or set
-    no_fault_detected=True if all services are confirmed healthy.
+    Submits your final root cause diagnosis and terminates the diagnostic session.
+    Provide a detailed 'evidence' string explaining your findings and the specific data 
+    points (logs, metrics) that support your conclusion.
+    If your investigation confirms all services are healthy and no fault is active, 
+    set 'no_fault_detected' to True.
+    This tool MUST be called to conclude the task once the root cause is identified.
     """
     logger.info(f"[submit_diagnosis] service={service} component={component} "
                 f"fault_type={fault_type} no_fault={no_fault_detected}")
 
-    # Validate evidence length
+    # Ensure evidence is substantial enough
     if not evidence or len(evidence.strip()) < 10:
         return make_tool_response(
             tool="submit_diagnosis",

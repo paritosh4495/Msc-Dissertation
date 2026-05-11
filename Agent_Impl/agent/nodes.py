@@ -1,9 +1,5 @@
-# Node factory functions for the diagnostic agent graph.
-#
-# Both nodes are constructed via factory functions that close over
-# the model and tools. The factories are called once in graph.py;
-# the returned callables are registered as graph nodes.
-#
+# Node definitions for the diagnostic agent graph.
+# These functions create the logic for the LLM interaction and tool execution steps.
 
 import json
 import logging
@@ -18,31 +14,15 @@ from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# agent_node factory
-
-
 def make_agent_node(model_with_tools: Runnable) -> Callable:
     """
-    Factory that returns the agent_node callable.
-
-    The returned node calls the LLM with the full message history and
-    appends the resulting AIMessage to state.
+    Creates the agent node that interacts with the LLM. 
+    This node sends the current message history to the model and captures 
+    its response. The resulting AIMessage will contain either a text response 
+    or specific tool calls that determine the agent's next action.
     """
 
     def agent_node(state: AgentState) -> dict:
-        """
-        Call the LLM with the current message history.
-
-        The LLM returns either:
-          - An AIMessage with non-empty tool_calls → agent wants to invoke tools
-          - An AIMessage with empty tool_calls → agent is done (or gave up)
-
-        The should_continue edge in graph.py inspects tool_calls to decide
-        which case applies.
-
-        Errors from the LLM are allowed to propagate — the harness owns
-        session-level error handling.
-        """
         logger.debug(f"[agent_node] condition={state['condition']} "
                      f"step={state['step_count']} "
                      f"messages={len(state['messages'])}")
@@ -59,46 +39,24 @@ def make_agent_node(model_with_tools: Runnable) -> Callable:
     return agent_node
 
 
-# tools_node factory
-
-
 def make_tools_node(tools: list[BaseTool]) -> Callable:
     """
-    Factory that returns the tools_node callable.
-
-    The returned node:
-      1. Delegates tool execution to LangGraph's ToolNode (handles parallel
-         calls, error catching, and ToolMessage construction).
-      2. Increments step_count by 1.
-      3. Sets terminated=True if submit_diagnosis returned status="success".
-
+    Creates the node responsible for executing tools requested by the agent.
+    It runs tool calls in parallel using LangGraph's ToolNode, increments 
+    the session step counter, and checks if a successful 'submit_diagnosis' 
+    was performed to signal that the session should terminate.
     """
-    # Instantiate LangGraph's prebuilt ToolNode once.
-    # ToolNode handles: tool lookup by name, parallel execution of multiple
-    # tool calls in a single AIMessage, exception catching per tool call,
-    # and ToolMessage construction with correct tool_call_id linkage.
-
     _tool_node = ToolNode(tools)
 
     def tools_node(state: AgentState) -> dict:
-        """
-        Execute all tool calls from the last AIMessage.
-
-        After execution, check if submit_diagnosis succeeded and
-        increment the step counter.
-        """
         logger.debug(f"[tools_node] condition={state['condition']} "
                      f"step={state['step_count']} — executing tool calls")
 
-        # Delegate to ToolNode for execution.
-        # Returns a dict with key "messages" containing list[ToolMessage].
+        # Execute all tool calls from the last message
         tool_result: dict = _tool_node.invoke(state)
         new_tool_messages = tool_result.get("messages", [])
 
-        # --- Termination detection ---
-        # Build a lookup of tool_call_id → tool_name from the last AIMessage.
-        # This lets us identify which ToolMessage corresponds to submit_diagnosis
-        # without relying solely on content parsing.
+        # Check if the agent submitted a valid diagnosis
         last_ai_message: AIMessage = state["messages"][-1]
         call_id_to_name: dict[str, str] = {
             tc["id"]: tc["name"]
@@ -111,6 +69,7 @@ def make_tools_node(tools: list[BaseTool]) -> Callable:
             tool_name = call_id_to_name.get(tool_msg.tool_call_id, "")
 
             if tool_name == "submit_diagnosis":
+                # Mark session as terminated if the diagnosis was accepted
                 terminated = _check_submission_succeeded(tool_msg.content)
                 if terminated:
                     logger.info(f"[tools_node] submit_diagnosis succeeded — "
@@ -130,35 +89,25 @@ def make_tools_node(tools: list[BaseTool]) -> Callable:
     return tools_node
 
 
-# Internal helpers
-
-
 def _check_submission_succeeded(content) -> bool:
     """
-    Parse ToolMessage content from submit_diagnosis and return True
-    if the submission was successful.
-
-    Tools return a plain dict. LangGraph's ToolNode serialises it to a
-    JSON string. Defensive handling for list and dict types is included
-    for LangGraph version resilience.
-
-    Returns False on any parse failure — conservative default keeps the
-    session running rather than terminating incorrectly.
+    Parses the response from the 'submit_diagnosis' tool to verify success.
+    It handles JSON stringified content and checks for the 'submitted' flag.
     """
-    # Normalise list content (LangGraph structured content blocks)
+    # Normalize different ToolMessage content formats
     if isinstance(content, list):
         content = " ".join(
             block.get("text", "") if isinstance(block, dict) else str(block)
             for block in content)
 
-    # Defensive: handle if LangGraph ever passes the dict directly
+    # Handle direct dict responses
     if isinstance(content, dict):
         return content.get("data", {}).get("submitted") is True
 
     if not isinstance(content, str):
         return False
 
-    # Primary path: JSON string from ToolNode serialisation
+    # Primary path: parse JSON string from ToolNode
     try:
         parsed = json.loads(content)
         return parsed.get("data", {}).get("submitted") is True

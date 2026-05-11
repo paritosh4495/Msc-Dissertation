@@ -1,22 +1,5 @@
-#
-# End-to-end smoke test for the diagnostic agent loop.
-#
-# Runs a single live trial against the testbed in its current state
-# (no fault injected). Verifies the full loop: LM Studio → agent →
-# tools → agent → ... → termination.
-#
-# Prerequisites:
-#   - LM Studio running at localhost:1234 with the configured model loaded
-#   - Minikube cluster running with all three services deployed
-#   - kubectl context pointing at minikube
-#
-# Run from Agent_Impl/:
-#   python smoke_test.py [--condition A|B]
-#
-# Expected outcomes (any of these = PASS):
-#   - terminated=True  : agent called submit_diagnosis
-#   - terminated=False : agent hit step limit or produced no tool calls
-#     (proves the loop ran and terminated cleanly without exceptions)
+# End-to-end smoke test for the diagnostic agent.
+# Runs a single trial against the testbed to verify the LLM-to-tool loop.
 
 from __future__ import annotations
 
@@ -29,27 +12,27 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pathlib import Path
 
-# Configure logging before importing agent modules so all loggers are captured
+# Initialise logging before importing agent components
 logging.basicConfig(
-    level=logging.WARNING,  # suppress DEBUG/INFO from langgraph internals
+    level=logging.WARNING,
     format="%(levelname)s | %(name)s | %(message)s",
     stream=sys.stdout,
 )
 
-# Bump our own modules to DEBUG so we see every node execution
+# Enable debug logging for the agent and tools
 for logger_name in ("agent.nodes", "agent.graph", "tools"):
     logging.getLogger(logger_name).setLevel(logging.DEBUG)
 
 from agent import GRAPH_RECURSION_LIMIT, build_agent, build_initial_state
 from config import AGENT_STEP_LIMIT
 
-# Pretty-print helpers
-
+# Display constants
 SEP = "─" * 70
 SEP2 = "═" * 70
 
 
 def _print_message(msg, index: int):
+    """Pretty-prints LangChain messages for terminal output."""
     if isinstance(msg, SystemMessage):
         print(
             f"  [{index}] SystemMessage ({len(str(msg.content))} chars) — system prompt"
@@ -72,7 +55,6 @@ def _print_message(msg, index: int):
         try:
             parsed = json.loads(msg.content)
             status = parsed.get("status", "?")
-            # Show a brief data summary
             data_keys = list(parsed.get("data", {}).keys())
             print(f"  [{index}] ToolMessage [{status}] data keys: {data_keys}")
         except (json.JSONDecodeError, AttributeError):
@@ -83,6 +65,7 @@ def _print_message(msg, index: int):
 
 
 def _print_final_state(final_state: dict):
+    """Outputs the summary of the final agent state."""
     print(SEP2)
     print("FINAL STATE")
     print(SEP2)
@@ -98,17 +81,13 @@ def _print_final_state(final_state: dict):
 
 
 def _determine_outcome(final_state: dict) -> tuple[str, bool]:
-    """
-    Returns (outcome_label, passed).
-    passed=True for any clean termination — even without a submission.
-    passed=False only if something went wrong structurally.
-    """
+    """Evaluates the outcome of the test run for reporting."""
     if final_state["terminated"]:
         return "SUBMITTED_DIAGNOSIS", True
 
     last_msg = final_state["messages"][-1]
     if isinstance(last_msg, AIMessage) and not last_msg.tool_calls:
-        return "NO_TOOL_CALLS (agent gave up or concluded without submitting)", True
+        return "NO_TOOL_CALLS", True
 
     if final_state["step_count"] >= AGENT_STEP_LIMIT:
         return "STEP_LIMIT_REACHED", True
@@ -116,32 +95,27 @@ def _determine_outcome(final_state: dict) -> tuple[str, bool]:
     return "UNKNOWN_TERMINATION", False
 
 
-# Main
-
-
 def run_smoke_test(condition: str):
+    """Executes the agent loop for the given observability condition."""
     print(SEP2)
     print(f"SMOKE TEST — Condition {condition}")
     print(f"Step limit : {AGENT_STEP_LIMIT}")
     print(f"Recursion  : {GRAPH_RECURSION_LIMIT}")
     print(SEP2)
 
-    # --- Build agent ---
+    # Initialise agent
     print("\n[1/3] Building agent graph...")
     t0 = time.time()
     graph, system_prompt = build_agent(condition)
     print(f"      Graph compiled in {time.time() - t0:.2f}s")
 
-    # --- Build initial state ---
+    # Set initial state
     print("\n[2/3] Building initial state...")
     initial_state = build_initial_state(condition, system_prompt)
-    print(f"      Initial messages: {len(initial_state['messages'])}")
     print(f"      Condition: {initial_state['condition']}")
-    print(f"      Step count: {initial_state['step_count']}")
-    print(f"      Terminated: {initial_state['terminated']}")
 
-    # --- Run the graph ---
-    print(f"\n[3/3] Invoking graph (this will make live LLM + K8s calls)...")
+    # Start the diagnostic loop
+    print(f"\n[3/3] Invoking graph (making live LLM and K8s calls)...")
     print(SEP)
 
     t1 = time.time()
@@ -160,7 +134,6 @@ def run_smoke_test(condition: str):
     elapsed = time.time() - t1
     print(f"\nGraph execution completed in {elapsed:.1f}s")
 
-    # --- Report ---
     _print_final_state(final_state)
     outcome, passed = _determine_outcome(final_state)
 
@@ -177,7 +150,7 @@ def run_smoke_test(condition: str):
 def dump_session_to_json(state: dict,
                          condition: str,
                          path: str = "smoke_output.json") -> None:
-    """Serialise the full session state to a JSON file for inspection."""
+    """Exports the session messages to JSON for manual review."""
 
     def serialise_message(msg) -> dict:
         base = {

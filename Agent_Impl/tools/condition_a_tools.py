@@ -25,15 +25,14 @@ from utils.tool_utils import make_tool_response
 
 logger = logging.getLogger(__name__)
 
-# Tool 1 — get_service_health_a
-
 
 def get_service_health_a(service: str) -> dict:
     """
-    Returns Kubernetes pod health: phase, readiness, restart count,
-    and a status_summary of UP / DEGRADED / DOWN.
-    This is a point-in-time snapshot of pod state at the moment of the call.
-    Use this first to identify which service is degraded.
+    Returns the Kubernetes-level health of a service pod, including its phase, 
+    readiness status, and restart count. 
+    Use this as a starting point to check if a pod is crashing (high restart count) 
+    or failing its readiness probe. 
+    A status of 'DEGRADED' or 'DOWN' often points to a service-level failure.
     """
     tool_name = "get_service_health_a"
 
@@ -58,12 +57,10 @@ def get_service_health_a(service: str) -> dict:
                 f"No pod found for service '{service}' in namespace '{NAMESPACE}'.",
             )
 
-        # --- Extract phase ---
+        # Extract pod phase
         pod_phase: str = pod.status.phase or "Unknown"
 
-        # --- Extract Ready condition ---
-        # pod.status.conditions is a list of V1PodCondition objects.
-        # The "status" field is the string "True" or "False" — not a Python bool.
+        # Check Readiness condition
         ready: bool = False
         if pod.status.conditions:
             for condition in pod.status.conditions:
@@ -71,12 +68,12 @@ def get_service_health_a(service: str) -> dict:
                     ready = condition.status == "True"
                     break
 
-        # --- Extract restart count ---
+        # Extract restart count from the first container
         restart_count: int = 0
         if pod.status.container_statuses:
             restart_count = pod.status.container_statuses[0].restart_count or 0
 
-        # --- Derive status summary ---
+        # Summarize status
         if pod_phase == "Running" and ready:
             status_summary = "UP"
         elif pod_phase == "Running" and not ready:
@@ -108,14 +105,13 @@ def get_service_health_a(service: str) -> dict:
         )
 
 
-# Tool 2 — get_resource_metrics
-
-
 def get_resource_metrics(service: str) -> dict:
     """
-    Returns current CPU and memory usage as percentages of configured
-    pod limits. Use to confirm CPU saturation or memory pressure.
-    Point-in-time snapshot — call repeatedly to observe trends.
+    Retrieves real-time CPU and memory usage for a service pod as percentages 
+    of its configured Kubernetes limits. 
+    Use this to identify resource-related faults like CPU saturation or high 
+    memory pressure. 
+    Note that metrics are snapshots and may have a slight lag from the Metrics Server.
     """
     tool_name = "get_resource_metrics"
 
@@ -138,7 +134,7 @@ def get_resource_metrics(service: str) -> dict:
                 error_message=f"No pod found for service '{service}'.",
             )
 
-        # --- Fetch metrics from Metrics Server ---
+        # Query the K8s Metrics API
         result = custom_api().get_namespaced_custom_object(
             group="metrics.k8s.io",
             version="v1beta1",
@@ -160,16 +156,16 @@ def get_resource_metrics(service: str) -> dict:
         cpu_raw = usage.get("cpu", "0m")
         memory_raw = usage.get("memory", "0Ki")
 
-        # --- Parse to canonical units ---
+        # Canonicalize units
         cpu_millicores = parse_cpu_to_millicores(cpu_raw)
         memory_bytes = parse_memory_to_bytes(memory_raw)
 
-        # --- Retrieve limits from config (sourced from manifests) ---
+        # Retrieve configured limits
         limits = POD_RESOURCE_LIMITS[service]
         cpu_limit_mc = limits["cpu_millicores"]
         memory_limit_b = limits["memory_bytes"]
 
-        # --- Compute percentages, guard against division by zero ---
+        # Compute usage percentages
         cpu_pct = round((cpu_millicores / cpu_limit_mc) *
                         100, 2) if cpu_limit_mc > 0 else 0.0
         memory_pct = round((memory_bytes / memory_limit_b) *
@@ -211,15 +207,13 @@ def get_resource_metrics(service: str) -> dict:
         )
 
 
-# Tool 3 — get_pod_events
-
-
 def get_pod_events(service: str) -> dict:
     """
-    Returns recent Kubernetes events for the service pod, sorted with
-    Warning events first. Use to detect OOMKill, restarts, and
-    scheduling failures.
-    
+    Fetches recent Kubernetes events related to the service pod, such as 
+    restarts, OOMKills, or scheduling failures. 
+    Warning events are prioritized at the top of the list. 
+    Use this when a service is 'DOWN' or 'DEGRADED' to find the underlying 
+    infrastructure cause.
     """
     tool_name = "get_pod_events"
 
@@ -235,8 +229,7 @@ def get_pod_events(service: str) -> dict:
     try:
         events = core_v1_api().list_namespaced_event(namespace=NAMESPACE, )
 
-        # Filter to Pod-kind events whose name starts with the service name.
-        # This captures both current and recently terminated pods.
+        # Filter for pod-related events for this service
         relevant = [
             e for e in events.items if e.involved_object.kind == "Pod"
             and e.involved_object.name.startswith(service)
@@ -254,7 +247,7 @@ def get_pod_events(service: str) -> dict:
                 },
             )
 
-        # Sort: Warning events first, then Normal; within each group most recent first.
+        # Sort: Warning first, then by timestamp descending
         def _sort_key(e):
             type_rank = 0 if e.type == "Warning" else 1
             ts = e.last_timestamp or e.event_time

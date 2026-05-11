@@ -60,7 +60,7 @@ public class F1ConnectionPoolStarvationFault implements Fault {
         log.info("F1: Activating starvation. Max pool size is {}", maxPoolSize);
         active.set(true);
 
-        // Start a background thread that aggresively steals any released connection
+        // Background task to continuously acquire connections as they become available
         backgroundStealer = Executors.newSingleThreadScheduledExecutor();
         backgroundStealer.scheduleAtFixedRate(()->{
             if(heldConnections.size()<maxPoolSize) {
@@ -77,10 +77,9 @@ public class F1ConnectionPoolStarvationFault implements Fault {
 
     @Override
     public synchronized void deactivate() {
-        // Check if its actually active first
         if(!active.get()) return;
 
-        // 1. Stop stealing new connections
+        // Stop the acquisition task
         if(backgroundStealer!=null) {
             backgroundStealer.shutdownNow();
 
@@ -92,12 +91,12 @@ public class F1ConnectionPoolStarvationFault implements Fault {
             }
             backgroundStealer = null;
         }
-        //2. Release everything we hold
 
+        // Return all held connections to the pool
         log.info("Deactivating F1: Releasing {} connections", heldConnections.size());
         heldConnections.forEach(this::closeQuietly);
         heldConnections.clear();
-        // Now set to false when it is cleared out
+        
         active.set(false);
     }
 
@@ -113,7 +112,7 @@ public class F1ConnectionPoolStarvationFault implements Fault {
        try {
            return future.get(timeoutMs,TimeUnit.MILLISECONDS);
        }catch (TimeoutException e){
-           // If we timed out, but the future eventually gets a connection later, close it now.
+           // Prevent leaks if a connection is acquired after the timeout
            future.thenAccept(this::closeQuietly);
            return null;
        } catch (InterruptedException | ExecutionException e) {

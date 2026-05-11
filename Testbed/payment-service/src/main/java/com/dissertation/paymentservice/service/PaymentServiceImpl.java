@@ -27,7 +27,7 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Processing authorization for order {} and customer {} with amount {}", 
                 request.getOrderNumber(), request.getCustomerId(), request.getAmount());
 
-        // Simulate processing delay
+        // Processing latency for payment provider call
         try {
             Thread.sleep(200);
         } catch (InterruptedException e) {

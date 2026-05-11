@@ -1,4 +1,4 @@
-# Condition B diagnostic tools — Framework-Native Observability.
+# Condition B diagnostic tools — Framework-Native Observability via Spring Actuator.
 
 from __future__ import annotations
 
@@ -11,21 +11,17 @@ from utils.tool_utils import make_tool_response
 
 logger = logging.getLogger(__name__)
 
-# Maximum circuit breaker events to return to the agent.
-
+# Limits for circuit breaker event processing
 _CB_MAX_EVENTS = 20
-
-# When filtering SUCCESS events, keep only this many most recent.
 _CB_SUCCESS_KEEP = 5
-
-# Tool 1 — get_service_health_b
 
 
 def get_service_health_b(service: str) -> dict:
     """
-    Returns the full Spring Boot Actuator health hierarchy including all
-    component statuses (db, hikariPool, diskSpace, etc.) with their details.
-    Use this first to identify which service is degraded.
+    Retrieves the detailed Spring Boot Actuator health report for a service.
+    This includes statuses for internal components like the database connection pool (Hikari), 
+    disk space, and custom health indicators. 
+    Use this to pinpoint which specific subsystem is failing within a service.
     """
     tool_name = "get_service_health_b"
 
@@ -57,20 +53,20 @@ def get_service_health_b(service: str) -> dict:
         )
 
 
-# Tool 2 — query_actuator_metrics
-
-
 def query_actuator_metrics(
     service: str,
     metric_name: Optional[str] = None,
 ) -> dict:
     """
-    Query Spring Boot Actuator metrics for a service.
-    Call without metric_name to list all available metric names.
-    Call with metric_name to get its current value and available tags.
-    Key metrics: hikaricp.connections.active/pending/timeout, jvm.memory.used,
-    jvm.threads.live, process.cpu.usage, resilience4j.circuitbreaker.state.
-    Not all metrics are available on all services.
+    Queries real-time application metrics from Spring Boot Actuator.
+    If 'metric_name' is omitted, it returns a list of all available metric names.
+    If 'metric_name' is provided, it returns the current value and available tags for that metric.
+    
+    Commonly useful metrics:
+    - hikaricp.connections.active/pending/timeout: For identifying connection pool saturation.
+    - jvm.memory.used / jvm.threads.live: For memory leaks or thread exhaustion.
+    - process.cpu.usage: For identifying high CPU load.
+    - resilience4j.circuitbreaker.state: For checking the current circuit breaker state.
     """
     tool_name = "query_actuator_metrics"
 
@@ -85,7 +81,7 @@ def query_actuator_metrics(
 
     try:
         if metric_name is None:
-            # Return full list of available metric names
+            # List all available metrics
             raw = actuator_get(service, "/actuator/metrics")
             names = raw.get("names", [])
             return make_tool_response(
@@ -100,13 +96,12 @@ def query_actuator_metrics(
                     "count":
                     len(names),
                     "note":
-                    ("Call again with a specific metric_name to get its value. "
-                     "See tool description for commonly useful metric names."),
+                    "Call again with a specific metric_name to get its value.",
                 },
             )
 
         else:
-            # Return measurement for the requested metric
+            # Fetch details for the requested metric
             path = f"/actuator/metrics/{metric_name.strip()}"
             raw = actuator_get(service, path)
 
@@ -135,15 +130,12 @@ def query_actuator_metrics(
         )
 
 
-# Tool 3 — get_circuit_breaker_state
-
-
 def get_circuit_breaker_state(service: str) -> dict:
     """
-    Returns Resilience4j circuit breaker state (CLOSED/OPEN/HALF_OPEN),
-    failure rate, and recent event history prioritising STATE_TRANSITION
-    and ERROR events. Use when a service shows elevated failure rates
-    or upstream call errors.
+    Retrieves the current state of Resilience4j circuit breakers for a service, 
+    including failure rates and recent event history (state transitions, errors).
+    Use this to diagnose issues where a service is returning 503 errors or blocking 
+    calls to downstream dependencies.
     """
     tool_name = "get_circuit_breaker_state"
 
@@ -156,7 +148,7 @@ def get_circuit_breaker_state(service: str) -> dict:
                            f"Valid services: {sorted(VALID_SERVICES)}"),
         )
 
-    # --- Fetch state snapshot ---
+    # Fetch current state snapshot
     try:
         state_raw = actuator_get(service, "/actuator/circuitbreakers")
     except Exception as e:
@@ -170,8 +162,7 @@ def get_circuit_breaker_state(service: str) -> dict:
             error_message=f"Could not fetch circuit breaker state: {e}",
         )
 
-    # --- Fetch event history ---
-    # Use a longer timeout — service may be under stress during F3.
+    # Fetch recent events (state transitions and errors)
     events_raw: dict = {}
     events_error: Optional[str] = None
     try:
@@ -181,17 +172,14 @@ def get_circuit_breaker_state(service: str) -> dict:
             timeout=8,
         )
     except Exception as e:
-        # Events unavailable is non-fatal — state snapshot is still useful.
         logger.warning(
             f"[{tool_name}] Could not fetch circuit breaker events for '{service}': {e}"
         )
         events_error = str(e)
 
-    # --- Filter and rank events ---
     all_events = events_raw.get("circuitBreakerEvents", [])
     filtered = _filter_cb_events(all_events)
 
-    # --- Build response ---
     cb_states = state_raw.get("circuitBreakers", {})
 
     return make_tool_response(
@@ -208,9 +196,7 @@ def get_circuit_breaker_state(service: str) -> dict:
             "events":
             filtered,
             "events_note":
-            ("STATE_TRANSITION and ERROR events always shown. "
-             f"SUCCESS events capped at last {_CB_SUCCESS_KEEP}. "
-             "Events ordered most recent first."),
+            "Prioritizes STATE_TRANSITION and ERROR events. Most recent first.",
             **({
                 "events_error": events_error
             } if events_error else {}),
@@ -220,17 +206,10 @@ def get_circuit_breaker_state(service: str) -> dict:
 
 def _filter_cb_events(events: list[dict]) -> list[dict]:
     """
-    Filter and rank circuit breaker events for agent consumption.
-
-    Priority order (most recent first within each group):
-      1. STATE_TRANSITION — definitive fault signal
-      2. ERROR            — individual call failures
-      3. NOT_PERMITTED    — calls blocked while OPEN
-      4. SUCCESS          — last _CB_SUCCESS_KEEP only
-
-    Total capped at _CB_MAX_EVENTS.
+    Internal helper to filter and rank circuit breaker events for the agent.
+    Prioritizes transitions and errors to surface critical failures.
     """
-    # Reverse so most recent is first (API returns oldest first)
+    # Reverse so most recent is first
     events = list(reversed(events))
 
     priority = []

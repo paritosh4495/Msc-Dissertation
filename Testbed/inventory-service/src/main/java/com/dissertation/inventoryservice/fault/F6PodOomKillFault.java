@@ -22,24 +22,19 @@ public class F6PodOomKillFault implements Fault{
 
     private final AtomicBoolean active =  new AtomicBoolean(false);
 
-    // Off-heap direct buffers which are counted by the OS, not the JVM heap
-    // These will push the container past its memory limit and trigger a OOM Kill
-
+    // Use off-heap buffers to trigger container-level memory limits
     private final List<ByteBuffer> offHeapBuffers = new ArrayList<>();
 
     private ScheduledExecutorService allocator;
 
-    // We will allocate 50MB off-heap every 500ms
-
+    // Allocation configuration
     private static final int CHUNK_SIZE_MB  = 50;
     private static final int ALLOCATION_INTERVAL_MS = 500;
-
 
     @PostConstruct
     private void init(){
         registry.register(this);
     }
-
 
     @Override
     public String getId() {
@@ -70,7 +65,8 @@ public class F6PodOomKillFault implements Fault{
                 try {
                     int chunkBytes = CHUNK_SIZE_MB * 1024 * 1024;
                     ByteBuffer buffer = ByteBuffer.allocateDirect(chunkBytes);
-                    // Touch every page to ensure OS actually commits the memory
+                    
+                    // Force the OS to commit the pages by writing to the buffer
                     for (int i=0; i<chunkBytes; i+=4096){
                         buffer.put(i, (byte) 0xFF);
                     }
@@ -88,17 +84,14 @@ public class F6PodOomKillFault implements Fault{
 
     @Override
     public void deactivate() {
-
-        // Deactivate will almost never be called for F6 in practice since the pod will be restarted by Kubernetes before we can deactivate it.
-        // This implementation exists for docker compose testing
-
+        // Pods are usually restarted before deactivation is called in Kubernetes
         if(active.compareAndExchange(true,false)){
             log.info("F6: Deactivating - Releasing buffers");
             if(allocator!=null){
                 allocator.shutdownNow();
             }
             offHeapBuffers.clear();
-            System.gc(); // hint to clean up direct buffer
+            System.gc(); // Trigger cleanup of direct buffers
             log.info("F6: off-heap buffers released");
         }
 

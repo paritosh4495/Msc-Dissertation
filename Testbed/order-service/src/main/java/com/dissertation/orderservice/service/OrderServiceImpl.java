@@ -40,12 +40,12 @@ public class OrderServiceImpl implements OrderService {
         String orderNumber = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         log.info("Creating order {} for customer {}", orderNumber, request.getCustomerId());
 
-        // 1. Initialise Order as PENDING
+        // Initialize the order in PENDING state
         Order order = Order.builder()
                 .orderNumber(orderNumber)
                 .customerId(request.getCustomerId())
                 .status(OrderStatus.PENDING)
-                .totalAmount(BigDecimal.ZERO) // Will be updated after reservation
+                .totalAmount(BigDecimal.ZERO)
                 .build();
         
         order = orderRepository.save(order);
@@ -61,7 +61,7 @@ public class OrderServiceImpl implements OrderService {
                 .build();
 
         try {
-            // 2. Reserve Stock
+            // Attempt to reserve stock in the inventory-service
             StockOperationResponse stockResponse = inventoryClient.reserveStock(stockRequest);
             
             if (!stockResponse.isSuccess()) {
@@ -70,7 +70,7 @@ public class OrderServiceImpl implements OrderService {
                 return orderMapper.toResponse(orderRepository.save(order));
             }
 
-            // Update order items with prices and calculate total
+            // Map reserved items and calculate the total order amount
             BigDecimal totalAmount = BigDecimal.ZERO;
             for (ReservedItemResponse reservedItem : stockResponse.getReservedItems()) {
                 OrderItem orderItem = OrderItem.builder()
@@ -86,8 +86,8 @@ public class OrderServiceImpl implements OrderService {
             order.setTotalAmount(totalAmount);
             order = orderRepository.save(order);
 
-            // 3. Process Payment
             try {
+                // Authorize payment via payment-service
                 PaymentRequest paymentRequest = PaymentRequest.builder()
                         .orderNumber(orderNumber)
                         .customerId(request.getCustomerId())
@@ -97,25 +97,24 @@ public class OrderServiceImpl implements OrderService {
                 PaymentResponse paymentResponse = paymentClient.authorizePayment(paymentRequest);
                 
                 if (paymentResponse != null && paymentResponse.getStatus() == PaymentStatus.AUTHORIZED) {
-                    // 4. Confirm Order
                     order.setStatus(OrderStatus.CONFIRMED);
                     log.info("Order {} confirmed successfully", orderNumber);
                 } else {
                     log.warn("Payment declined for order {}: {}", orderNumber, 
                             paymentResponse != null ? paymentResponse.getMessage() : "No response");
                     
-                    // COMPENSATE: Release Stock
+                    // Compensation: Release previously reserved stock
                     inventoryClient.releaseStock(stockRequest);
                     order.setStatus(OrderStatus.PAYMENT_FAILED);
                 }
                 
             } catch (CallNotPermittedException e) {
-                // Circuit breaker is OPEN - payment-service is likely down
+                // Handle circuit breaker being OPEN (likely downstream service failure)
                 log.error("Payment service unavailable for order {}: {}", orderNumber, e.getMessage());
                 inventoryClient.releaseStock(stockRequest);
                 order.setStatus(OrderStatus.PAYMENT_FAILED);
                 orderRepository.save(order);
-                throw e; // Rethrow to be caught by GlobalExceptionHandler
+                throw e; 
             } catch (Exception e) {
                 log.error("Payment failed for order {}: {}", orderNumber, e.getMessage());
                 inventoryClient.releaseStock(stockRequest);
@@ -123,7 +122,6 @@ public class OrderServiceImpl implements OrderService {
             }
 
         } catch (CallNotPermittedException e) {
-            // Re-throw if it was already caught in the inner block
             throw e;
         } catch (Exception e) {
             log.error("Error during order creation flow for {}: {}", orderNumber, e.getMessage());

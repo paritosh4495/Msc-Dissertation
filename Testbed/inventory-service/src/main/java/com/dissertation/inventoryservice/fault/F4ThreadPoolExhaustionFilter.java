@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 @Component
-@Order(1) // Ensure it runs early in the filter chain
+@Order(1) // Run early to capture requests before other processing
 @RequiredArgsConstructor
 @Slf4j
 public class F4ThreadPoolExhaustionFilter implements Filter {
@@ -24,14 +24,14 @@ public class F4ThreadPoolExhaustionFilter implements Filter {
         if (request instanceof HttpServletRequest httpRequest) {
             String path = httpRequest.getRequestURI();
             
-            // Only target API requests, bypass internal fault management and actuator
+            // Trap API requests to simulate thread pool exhaustion
             if (path.startsWith("/api/") && f4Fault.isActive()) {
                 boolean wasTrapped = f4Fault.tryBlock();
                 
                 if (wasTrapped) {
                     log.debug("F4: Thread released from trap for path: {}", path);
                 } else if (f4Fault.isActive()) {
-                    // This happens if the trap reached its safety limit
+                    // Requests proceed if the trap is at capacity
                     log.info("F4: Request allowed to proceed (trap capacity reached) for path: {}", path);
                 }
             }
