@@ -58,13 +58,14 @@ def query_actuator_metrics(
     metric_name: Optional[str] = None,
 ) -> dict:
     """
-    Queries real-time application metrics from Spring Boot Actuator.
+      Queries real-time application metrics from Spring Boot Actuator.
     If 'metric_name' is omitted, it returns a list of all available metric names.
     If 'metric_name' is provided, it returns the current value and available tags for that metric.
     
     Commonly useful metrics:
     - hikaricp.connections.active/pending/timeout: For identifying connection pool saturation.
-    - jvm.memory.used / jvm.threads.live: For memory leaks or thread exhaustion.
+    - jvm.memory.used: For identifying memory pressure or gradual heap growth.
+    - jvm.threads.states: For identifying thread-pool exhaustion (check for high BLOCKED or WAITING counts).
     - process.cpu.usage: For identifying high CPU load.
     - resilience4j.circuitbreaker.state: For checking the current circuit breaker state.
     """
