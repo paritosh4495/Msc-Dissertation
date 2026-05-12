@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from config import VALID_SERVICES
+from config import VALID_SERVICES, JVM_HEAP_MAX_BYTES
 from utils.actuator_utils import actuator_get
 from utils.tool_utils import make_tool_response
 
@@ -101,22 +101,78 @@ def query_actuator_metrics(
             )
 
         else:
-            # Fetch details for the requested metric
-            path = f"/actuator/metrics/{metric_name.strip()}"
+            # For jvm.memory.used, scope the query to heap only via the 'area' tag.
+            # This ensures the value is comparable to -Xmx (JVM's own heap cealing)
+            # All other metrics are fetched as is
+            if metric_name.strip() == "jvm.memory.used":
+                path = "/actuator/metrics/jvm.memory.used?tag=area:heap"
+            else:
+                path = f"/actuator/metrics/{metric_name.strip()}"
+
             raw = actuator_get(service, path)
+            measurements = raw.get("measurements", [])
+
+            # Normalise resource utilization metrics into interpretable percentages.
+            # Each metric is normalized against its own application-level reference frame -
+
+            normalised_measurements = None
+
+            if metric_name.strip() == "process.cpu.usage":
+                # process.cpu.usage is a 0.0 - 1.0 fraction of one CPU core.
+                # Multiply by 100 to get percentage of a single core.
+
+                for m in measurements:
+                    if m.get("statistic") == "VALUE":
+                        cpu_pct = round(m["value"] * 100, 2)
+                        normalised_measurements = [{
+                            "statistic":
+                            "VALUE",
+                            "value":
+                            cpu_pct,
+                            "unit":
+                            "percent_of_one_cpu_core",
+                        }]
+                        break
+
+            elif metric_name.strip() == "jvm.memory.used":
+                # Value is heap-only bytes (area=heap tag).
+                # Denominator is -Xmx512 - the JVM's own heap celining, set via _JAVA_OPTIONS in the K8s manifests.
+                for m in measurements:
+                    if m.get("statistic") == "VALUE":
+                        heap_used_bytes = m["value"]
+                        heap_used_pct = round(
+                            (heap_used_bytes / JVM_HEAP_MAX_BYTES) * 100, 2)
+                        normalised_measurements = [{
+                            "statistic":
+                            "VALUE",
+                            "value":
+                            heap_used_pct,
+                            "unit":
+                            "percent_of_jvm_heap_limit",
+                            "heap_bytes_used":
+                            int(heap_used_bytes),
+                            "jvm_heap_max_bytes":
+                            JVM_HEAP_MAX_BYTES,
+                        }]
+                        break
 
             return make_tool_response(
                 tool=tool_name,
                 status="success",
                 service=service,
                 data={
-                    "metric_name": raw.get("name"),
-                    "description": raw.get("description"),
-                    "base_unit": raw.get("baseUnit"),
-                    "measurements": raw.get("measurements", []),
-                    "available_tags": raw.get("availableTags", []),
-                },
-            )
+                    "metric_name":
+                    raw.get("name"),
+                    "description":
+                    raw.get("description"),
+                    "base_unit":
+                    raw.get("baseUnit"),
+                    "measurements":
+                    normalised_measurements
+                    if normalised_measurements is not None else measurements,
+                    "available_tags":
+                    raw.get("availableTags", []),
+                })
 
     except Exception as e:
         logger.exception(
@@ -187,14 +243,10 @@ def get_circuit_breaker_state(service: str) -> dict:
         status="success",
         service=service,
         data={
-            "circuit_breakers":
-            cb_states,
-            "event_count_total":
-            len(all_events),
-            "events_shown":
-            len(filtered),
-            "events":
-            filtered,
+            "circuit_breakers": cb_states,
+            "event_count_total": len(all_events),
+            "events_shown": len(filtered),
+            "events": filtered,
             "events_note":
             "Prioritizes STATE_TRANSITION and ERROR events. Most recent first.",
             **({

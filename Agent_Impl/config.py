@@ -49,6 +49,12 @@ POD_RESOURCE_LIMITS: dict[str, dict[str, int]] = {
     },
 }
 
+# JVM heap ceiling — explicitly set via -Xmx512m in _JAVA_OPTIONS for all
+# three services in the K8s manifests. Used by Condition B tools to normalise
+# jvm.memory.used (heap area) as a percentage of the configured heap limit,
+# matching the normalisation already applied in get_resource_metrics (Condition A).
+JVM_HEAP_MAX_BYTES: int = 512 * _MiB  # 536,870,912 bytes
+
 # Log tool configuration
 
 # Number of raw lines fetched from the K8s logs API before level filtering.

@@ -151,18 +151,24 @@ def _fetch_and_filter(
             continue
 
         try:
+
             entry = json.loads(line)
 
-            # Extract log level from ECS dotted key or standard 'level' key
-            line_level = str(entry.get("log.level")
-                             or entry.get("level", "")).upper()
+            # Extract log level - handle ECS nested format {"log": {"level": "INFO"}}
+            # and flat format {"level": "INFO"} as a fallback
+            log_field = entry.get("log")
+            if isinstance(log_field, dict):
+                line_level = log_field.get("level", "").upper()
+            else:
+                line_level = str(entry.get("level", "")).upper()
 
             if line_level in LOG_LEVEL_HIERARCHY:
                 if LOG_LEVEL_HIERARCHY.index(line_level) >= min_level_index:
                     parsed.append(entry)
             else:
-                # Include unrecognised levels for lower thresholds to capture potential issues
-                if min_level_index <= LOG_LEVEL_HIERARCHY.index("WARN"):
+                # The level is genuinely unrecognisable (e.g. custom or missing)
+                # include only when requesting DEBUG/INFO to avoid noise
+                if min_level_index <= LOG_LEVEL_HIERARCHY.index("INFO"):
                     parsed.append(entry)
 
         except (json.JSONDecodeError, ValueError):

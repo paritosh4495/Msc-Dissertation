@@ -30,8 +30,9 @@ def get_service_health_a(service: str) -> dict:
     """
     Returns the Kubernetes-level health of a service pod, including its phase, 
     readiness status, and restart count. 
-    Use this as a starting point to check if a pod is crashing (high restart count) 
+    Use this as a starting point to check if a pod is crashing (non-zero restart count) 
     or failing its readiness probe. 
+    A non-zero restart_count warrants calling get_pod_events even if the service is currently UP.
     A status of 'DEGRADED' or 'DOWN' often points to a service-level failure.
     """
     tool_name = "get_service_health_a"
@@ -212,8 +213,11 @@ def get_pod_events(service: str) -> dict:
     Fetches recent Kubernetes events related to the service pod, such as 
     restarts, OOMKills, or scheduling failures. 
     Warning events are prioritized at the top of the list. 
-    Use this when a service is 'DOWN' or 'DEGRADED' to find the underlying 
+    Call this whenever get_service_health_a reports a non-zero restart_count,
+    regardless of current status. 
+    Also use this when a service is DOWN or DEGRADED to find the underlying
     infrastructure cause.
+
     """
     tool_name = "get_pod_events"
 
