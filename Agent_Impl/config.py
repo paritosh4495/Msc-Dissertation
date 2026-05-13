@@ -64,7 +64,7 @@ LOG_FETCH_BUFFER = 500
 # Maximum number of filtered log lines returned to the agent per tool call.
 # Truncation is applied AFTER level filtering, on line count (not characters),
 # to avoid splitting JSON log entries mid-line.
-MAX_LOG_LINES = 100
+MAX_LOG_LINES = 50
 
 # Filtering returns lines at or above the requested level.
 LOG_LEVEL_HIERARCHY: list[str] = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
