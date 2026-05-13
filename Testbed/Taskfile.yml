@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
-version: '3'
+version: "3"
 
 vars:
   GOOS: "{{default OS .GOOS}}"
@@ -8,6 +8,7 @@ vars:
   DC_DIR: "deployment/docker-compose"
   INFRA_DC_FILE: "{{.DC_DIR}}/infra.yml"
   APPS_DC_FILE: "{{.DC_DIR}}/apps.yml"
+  SLEEP_CMD: '{{if eq .GOOS "windows"}}powershell -Command "Start-Sleep -Seconds"{{else}}sleep{{end}}'
 
 tasks:
   default:
@@ -17,13 +18,17 @@ tasks:
     cmds:
       - "{{.MVNW}} clean verify"
 
+  sleep:
+    vars:
+      DURATION: "{{default 5 .DURATION}}"
+    cmds:
+      - "{{.SLEEP_CMD}} {{.DURATION}}"
 
   build:
     cmds:
       - "{{.MVNW}} -pl inventory-service spring-boot:build-image -DskipTests"
       - "{{.MVNW}} -pl order-service spring-boot:build-image -DskipTests"
       - "{{.MVNW}} -pl payment-service spring-boot:build-image -DskipTests"
-
 
   start_infra:
     cmds:
@@ -39,7 +44,6 @@ tasks:
       - task: stop_infra
       - task: sleep
       - task: start_infra
-
 
   start:
     deps: [build]
@@ -73,6 +77,13 @@ tasks:
     cmds:
       - "minikube delete --all"
 
+  kube_restart:
+    desc: "Restart the Local Minikube Kubernetes Cluster"
+    cmds:
+      - task: kube_stop
+      - task: sleep
+      - task: kube_start
+
   k8s_start:
     desc: "Deploy the stack to Kubernetes"
     cmds:
@@ -101,9 +112,9 @@ tasks:
     cmds:
       - "kubectl get all -n bookstore-testbed"
 
-
-  sleep:
-    vars:
-      DURATION: "{{default 5 .DURATION}}"
+  k8s_restart:
+    desc: "Restart the Kubernetes deployment"
     cmds:
-      - "{{.SLEEP_CMD}} {{.DURATION}}"
+      - task: k8s_stop
+      - task: sleep
+      - task: k8s_start
