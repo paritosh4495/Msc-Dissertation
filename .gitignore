@@ -53,6 +53,7 @@ __pycache__/
 /GEMINI.md
 /Testbed/deployment/docker-compose/postgres-data
 /Testbed/deployment/docker-compose/postgres-data/**
+/Testbed/deployment/docker-compose/postgres-data/base/
 /Agent/.env
 
 /Agent_Impl/myVenv
