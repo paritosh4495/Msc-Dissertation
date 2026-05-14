@@ -84,37 +84,44 @@ tasks:
       - task: sleep
       - task: kube_start
 
-  k8s_start:
-    desc: "Deploy the stack to Kubernetes"
+
+  k8s_start_a:
+    desc: "Deploy the stack to Kubernetes with Condition A profile"
     cmds:
-      - "kubectl apply -f deployment/kubernetes/namespace.yaml"
-      - "kubectl apply -f deployment/kubernetes/secrets.yaml"
-      - "kubectl apply -f deployment/kubernetes/postgres.yaml"
+      - "kubectl apply -k deployment/kubernetes/overlays/condition-a/"
       - "kubectl wait --for=condition=ready pod -l app=postgres -n bookstore-testbed --timeout=60s"
-      - "kubectl apply -f deployment/kubernetes/inventory-service.yaml"
-      - "kubectl apply -f deployment/kubernetes/payment-service.yaml"
-      - "kubectl apply -f deployment/kubernetes/order-service.yaml"
-      - "kubectl apply -f deployment/kubernetes/load-generator.yaml"
+      - "kubectl get all -n bookstore-testbed"
+
+  k8s_start_b:
+    desc: "Deploy the stack to Kubernetes with Condition B profile"
+    cmds:
+      - "kubectl apply -k deployment/kubernetes/overlays/condition-b/"
+      - "kubectl wait --for=condition=ready pod -l app=postgres -n bookstore-testbed --timeout=60s"
       - "kubectl get all -n bookstore-testbed"
 
   k8s_stop:
     desc: "Delete the stack from Kubernetes"
     cmds:
-      - "kubectl delete -f deployment/kubernetes/load-generator.yaml --ignore-not-found"
-      - "kubectl delete -f deployment/kubernetes/order-service.yaml --ignore-not-found"
-      - "kubectl delete -f deployment/kubernetes/inventory-service.yaml --ignore-not-found"
-      - "kubectl delete -f deployment/kubernetes/payment-service.yaml --ignore-not-found"
-      - "kubectl delete -f deployment/kubernetes/postgres.yaml --ignore-not-found"
-      - "kubectl delete -f deployment/kubernetes/namespace.yaml --ignore-not-found"
+      - "kubectl delete -k deployment/kubernetes/base/ --ignore-not-found"
 
   k8s_status:
     desc: "Show status of the Kubernetes deployment"
     cmds:
       - "kubectl get all -n bookstore-testbed"
 
-  k8s_restart:
-    desc: "Restart the Kubernetes deployment"
+  k8s_restart_a:
+    desc: "Full teardown then redeploy with Condition A profile"
     cmds:
       - task: k8s_stop
       - task: sleep
-      - task: k8s_start
+        vars: { DURATION: 15 }
+      - task: k8s_start_a
+
+  k8s_restart_b:
+    desc: "Full teardown then redeploy with Condition B profile"
+    cmds:
+      - task: k8s_stop
+      - task: sleep
+        vars: { DURATION: 15 }
+      - task: k8s_start_b
+
