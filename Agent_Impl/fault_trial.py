@@ -142,61 +142,105 @@ def deactivate_fault(fault_id: str) -> None:
             f"        → WARNING: deactivate call failed ({exc}). Continuing.")
 
 
-# ---------------------------------------------------------------------------
-# Pod restart + readiness helpers
-# ---------------------------------------------------------------------------
-
-
-def restart_all_pods(namespace: str = NAMESPACE) -> None:
-    deployments = ["inventory-service", "order-service", "payment-service"]
-    print(f"\n[pods] Restarting all deployments in namespace '{namespace}'...")
-    for dep in deployments:
-        cmd = [
-            "kubectl", "rollout", "restart", f"deployment/{dep}", "-n",
-            namespace
-        ]
-        print(f"       $ {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"       WARNING: {result.stderr.strip()}")
-        else:
-            print(f"       → {result.stdout.strip()}")
-
-
-def wait_for_all_pods_ready(
+def k8s_hard_reset(
+    condition: str,
     namespace: str = NAMESPACE,
-    timeout_seconds: int = 180,
-    poll_interval: int = 5,
+    sleep_s: int = 15,
+    pod_ready_timeout: int = 180,
 ) -> None:
-    deployments = ["inventory-service", "order-service", "payment-service"]
-    print(
-        f"\n[pods] Waiting for all pods to be Ready (timeout={timeout_seconds}s)..."
+    """
+    Full stack teardown → sleep → reapply via Kustomize overlay.
+    Equivalent to `task k8s_restart_a` or `task k8s_restart_b`.
+
+    Why this instead of `kubectl rollout restart`:
+      rollout restart does a rolling replacement — schedules the NEW pod
+      before the OLD one has freed CPU. On single-node Minikube this emits
+      FailedScheduling / Insufficient cpu events that persist for ~1h and
+      contaminate subsequent trials' get_pod_events output.
+
+    A full delete → reapply guarantees:
+      - No stale Kubernetes events (namespace deletion clears all events)
+      - No residual restart_count carried over from fault injection
+      - No FailedScheduling noise — new pods only start after old ones are gone
+      - SPRING_PROFILES_ACTIVE is baked in at apply time via Kustomize overlay
+        (set_spring_profile() is no longer needed)
+    """
+    overlay = f"deployment/kubernetes/overlays/condition-{condition.lower()}/"
+    base = "deployment/kubernetes/base/"
+
+    print(f"\n[reset] Full k8s hard reset → condition-{condition.lower()}")
+    print(f"        Overlay : {overlay}")
+
+    # ── Teardown ────────────────────────────────────────────────────────
+    print("\n[reset] Deleting stack (kubectl delete -k base)...")
+    result = subprocess.run(
+        ["kubectl", "delete", "-k", base, "--ignore-not-found"],
+        capture_output=True,
+        text=True,
     )
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        all_ready = True
-        for dep in deployments:
-            cmd = [
-                "kubectl",
-                "rollout",
-                "status",
-                f"deployment/{dep}",
-                "-n",
-                namespace,
-                "--timeout=10s",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                all_ready = False
-                break
-        if all_ready:
-            print("       ✓ All deployments rolled out and ready.")
-            return
-        remaining = int(deadline - time.time())
-        print(f"       ... not ready yet — retrying (≤{remaining}s remaining)")
-        time.sleep(poll_interval)
-    raise RuntimeError(
-        f"Timed out after {timeout_seconds}s waiting for pods to become ready."
+    if result.stdout.strip():
+        print(f"        → {result.stdout.strip()}")
+
+    # Wait for all pods to be fully gone before reapplying
+    print(f"\n[reset] Waiting for all pods to terminate in '{namespace}'...")
+    subprocess.run(
+        [
+            "kubectl", "wait", "--for=delete", "pod", "--all", "-n", namespace,
+            "--timeout=120s"
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    # ── Sleep ────────────────────────────────────────────────────────────
+    print(f"\n[reset] Sleeping {sleep_s}s before reapply...")
+    time.sleep(sleep_s)
+
+    # ── Reapply via Kustomize overlay ────────────────────────────────────
+    print(f"\n[reset] Applying overlay: {overlay}")
+    result = subprocess.run(
+        ["kubectl", "apply", "-k", overlay],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"kubectl apply -k failed:\n{result.stderr.strip()}")
+    if result.stdout.strip():
+        print(f"        → {result.stdout.strip()}")
+
+    # Wait for postgres first (app services depend on it)
+    print("\n[reset] Waiting for postgres to be ready...")
+    subprocess.run(
+        [
+            "kubectl", "wait", "--for=condition=ready", "pod", "-l",
+            "app=postgres", "-n", namespace, "--timeout=60s"
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    # Wait for all three app deployments to roll out
+    print(
+        f"\n[reset] Waiting for app deployments (timeout={pod_ready_timeout}s)..."
+    )
+    for svc in ["inventory-service", "order-service", "payment-service"]:
+        result = subprocess.run(
+            [
+                "kubectl", "rollout", "status", f"deployment/{svc}", "-n",
+                namespace, f"--timeout={pod_ready_timeout}s"
+            ],
+            capture_output=True,
+            text=True,
+        )
+        status = result.stdout.strip() or result.stderr.strip()
+        print(f"        {svc}: {status}")
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Deployment {svc} did not become ready in time.")
+
+    print(
+        f"\n[reset] ✓ Stack ready with condition-{condition.lower()} profile. Event slate is clean."
     )
 
 
@@ -523,36 +567,6 @@ def dump_trial_to_json(
     print(f"\n[output] Session saved → {path}")
 
 
-def set_spring_profile(condition: str, namespace: str = NAMESPACE) -> None:
-    """
-    Patches SPRING_PROFILES_ACTIVE on all three service deployments to activate
-    the correct Spring profile (condition-a or condition-b) before each trial phase.
-    The subsequent restart_all_pods() + wait_for_all_pods_ready() will pick this up.
-    """
-    deployments = ["inventory-service", "order-service", "payment-service"]
-    profile_value = f"condition-{condition.lower()}"
-    print(
-        f"\n[profile] Setting SPRING_PROFILES_ACTIVE={profile_value} on all deployments..."
-    )
-    for dep in deployments:
-        cmd = [
-            "kubectl",
-            "set",
-            "env",
-            f"deployment/{dep}",
-            f"SPRING_PROFILES_ACTIVE={profile_value}",
-            "-n",
-            namespace,
-        ]
-        print(f"          $ {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to set Spring profile on {dep}: {result.stderr.strip()}"
-            )
-        print(f"          → {result.stdout.strip()}")
-
-
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
@@ -594,10 +608,7 @@ def run_trial(
     print(f"{'='*70}")
 
     # Ensure pods are running with the correct profile before anything else.
-
-    set_spring_profile("A")  # switch to Condition A profile for all services
-    restart_all_pods(NAMESPACE)
-    wait_for_all_pods_ready(NAMESPACE, timeout_seconds=pod_ready_wait)
+    k8s_hard_reset("A", pod_ready_timeout=pod_ready_wait)
     materialise_wait(30, "post-restart JVM warmup")
 
     # F4: start concurrent load BEFORE activating the fault so threads are
@@ -624,9 +635,7 @@ def run_trial(
     print(f"{'='*70}")
 
     deactivate_fault(fault_id)
-    set_spring_profile("B")  # switch to Condition B profile for all services
-    restart_all_pods(NAMESPACE)
-    wait_for_all_pods_ready(NAMESPACE, timeout_seconds=pod_ready_wait)
+    k8s_hard_reset("B", pod_ready_timeout=pod_ready_wait)
     materialise_wait(30, "post-restart JVM warmup")
 
     # ── PHASE 2: Condition B ────────────────────────────────────────────
