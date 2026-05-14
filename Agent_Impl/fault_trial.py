@@ -91,7 +91,7 @@ FAULT_CATALOGUE: dict[str, tuple[str, str, str]] = {
 # F6 ignores this entirely — it uses event-driven polling.
 FAULT_MATERIALIZE_OVERRIDES: dict[str, int] = {
     "f4": 90,  # thread pool saturation needs sustained concurrent load + time
-    "f5": 150,  # slow heap leak must accumulate past GC recovery threshold
+    "f5": 210,  # slow heap leak must accumulate past GC recovery threshold
 }
 
 # F4 concurrent worker count.
@@ -103,8 +103,7 @@ F4_LOAD_CONCURRENCY = 60
 
 # F5 heap threshold (Condition B only).
 # Baseline heap under light load is ~30–40% of -Xmx512m.
-# 60% confirms meaningful leak accumulation above baseline.
-F5_HEAP_THRESHOLD_PCT = 60.0
+F5_HEAP_THRESHOLD_PCT = 85.0
 
 SEP = "─" * 70
 SEP2 = "═" * 70
@@ -524,6 +523,36 @@ def dump_trial_to_json(
     print(f"\n[output] Session saved → {path}")
 
 
+def set_spring_profile(condition: str, namespace: str = NAMESPACE) -> None:
+    """
+    Patches SPRING_PROFILES_ACTIVE on all three service deployments to activate
+    the correct Spring profile (condition-a or condition-b) before each trial phase.
+    The subsequent restart_all_pods() + wait_for_all_pods_ready() will pick this up.
+    """
+    deployments = ["inventory-service", "order-service", "payment-service"]
+    profile_value = f"condition-{condition.lower()}"
+    print(
+        f"\n[profile] Setting SPRING_PROFILES_ACTIVE={profile_value} on all deployments..."
+    )
+    for dep in deployments:
+        cmd = [
+            "kubectl",
+            "set",
+            "env",
+            f"deployment/{dep}",
+            f"SPRING_PROFILES_ACTIVE={profile_value}",
+            "-n",
+            namespace,
+        ]
+        print(f"          $ {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to set Spring profile on {dep}: {result.stderr.strip()}"
+            )
+        print(f"          → {result.stdout.strip()}")
+
+
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
@@ -564,6 +593,13 @@ def run_trial(
     print("PHASE 1 / 2  —  Condition A")
     print(f"{'='*70}")
 
+    # Ensure pods are running with the correct profile before anything else.
+
+    set_spring_profile("A")  # switch to Condition A profile for all services
+    restart_all_pods(NAMESPACE)
+    wait_for_all_pods_ready(NAMESPACE, timeout_seconds=pod_ready_wait)
+    materialise_wait(30, "post-restart JVM warmup")
+
     # F4: start concurrent load BEFORE activating the fault so threads are
     # already in-flight when the trap activates and can be immediately caught.
     f4_stop_a: threading.Event | None = None
@@ -588,6 +624,7 @@ def run_trial(
     print(f"{'='*70}")
 
     deactivate_fault(fault_id)
+    set_spring_profile("B")  # switch to Condition B profile for all services
     restart_all_pods(NAMESPACE)
     wait_for_all_pods_ready(NAMESPACE, timeout_seconds=pod_ready_wait)
     materialise_wait(30, "post-restart JVM warmup")

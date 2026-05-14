@@ -115,6 +115,74 @@ def get_application_logs(
         )
 
 
+def _deduplicate_logs(entries: list[dict]) -> list[dict]:
+    """
+    Collapses consecutive log entries with the same logger and message prefix
+    into a single entry annotated with a repeat count.
+    Preserves the last occurrence so the timestamp is most recent.
+    """
+    import re
+    deduplicated = []
+    run_key = None
+    run_count = 0
+    run_entry = None
+
+    def _normalise_message(entry: dict) -> str:
+
+        thread = str(
+            entry.get("process", {}).get("thread", {}).get("name", ""))
+        msg = str(entry.get("message", entry.get("msg", "")))
+        msg = re.sub(r'[\w-]{6,}$', '', msg).rstrip(': ')
+        return f"{thread}|{msg}"
+
+    for entry in entries:
+        key = _normalise_message(entry)
+        if key == run_key:
+            run_count += 1
+            run_entry = entry  # keep latest
+        else:
+            if run_entry is not None:
+                if run_count > 1:
+                    run_entry = dict(run_entry)
+                    run_entry["repeated_count"] = run_count
+                deduplicated.append(run_entry)
+            run_key = key
+            run_count = 1
+            run_entry = entry
+
+    if run_entry is not None:
+        if run_count > 1:
+            run_entry = dict(run_entry)
+            run_entry["repeated_count"] = run_count
+        deduplicated.append(run_entry)
+
+    return deduplicated
+
+
+def _truncate_stack_trace(entry: dict, max_lines: int = 15) -> dict:
+    """
+    Truncates the 'error.stack_trace' field (ECS convention) to max_lines lines.
+    Also handles the flat 'stack_trace' key as a fallback.
+    Mutates and returns the entry dict directly (entries are already copies from json.loads).
+    """
+    for key_path in [("error", "stack_trace"), ("stack_trace", )]:
+        if len(key_path) == 2:
+            container = entry.get(key_path[0])
+            if isinstance(container, dict) and isinstance(
+                    container.get(key_path[1]), str):
+                lines = container[key_path[1]].splitlines()
+                if len(lines) > max_lines:
+                    container[key_path[1]] = "\n".join(lines[:max_lines]) + \
+                        f"\n... [{len(lines) - max_lines} lines truncated]"
+        else:
+            if isinstance(entry.get(key_path[0]), str):
+                lines = entry[key_path[0]].splitlines()
+                if len(lines) > max_lines:
+                    entry[key_path[0]] = "\n".join(lines[:max_lines]) + \
+                        f"\n... [{len(lines) - max_lines} lines truncated]"
+    return entry
+
+
 def _fetch_and_filter(
     pod_name: str,
     namespace: str,
@@ -174,6 +242,17 @@ def _fetch_and_filter(
         except (json.JSONDecodeError, ValueError):
             # Include non-JSON content as raw lines to ensure visibility of banners/exceptions
             parsed.append({"raw": line, "level": "UNKNOWN"})
+
+    truncated_result = []
+    for entry in parsed:
+        truncated_entry = _truncate_stack_trace(entry)
+        truncated_result.append(truncated_entry)
+
+    parsed = truncated_result
+
+    # Deduplicate consecutive repeated messages
+
+    parsed = _deduplicate_logs(parsed)
 
     # Truncate to the most recent lines
     truncated = len(parsed) > requested_lines

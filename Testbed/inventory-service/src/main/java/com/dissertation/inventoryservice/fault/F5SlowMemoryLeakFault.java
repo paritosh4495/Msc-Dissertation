@@ -24,7 +24,7 @@ public class F5SlowMemoryLeakFault implements Fault {
     private final AtomicBoolean active = new AtomicBoolean(false);
     private final AtomicBoolean criticallyFull = new AtomicBoolean(false);
     private final AtomicLong leakedBytes = new AtomicLong(0);
-    private static final double HEAP_SAFETY_CEILING = 0.80;        // Stop at 80% of -Xmx
+    private static final double HEAP_SAFETY_CEILING = 0.90;        // Stop at 90% of -Xmx
 
     // Thread-safe  collection to ensure objects survive GC cycles
     private  final List<byte[]> leakContainer = Collections.synchronizedList(new ArrayList<>());

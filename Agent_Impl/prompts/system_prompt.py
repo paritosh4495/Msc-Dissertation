@@ -6,7 +6,7 @@ from config import VALID_CONDITIONS
 def build_system_prompt(condition: str) -> str:
     """
     Constructs the system prompt based on the observability condition (A or B).
-    The prompt sets the SRE persona and provides operational context for the 
+    The prompt sets the SRE persona and provides operational context for the
     Bookstore Testbed microservices.
     """
     if condition not in VALID_CONDITIONS:
@@ -30,26 +30,31 @@ Note: Database connection pool metrics (HikariCP) are only available for invento
 
 ## Investigation Guidelines
 - Begin by checking the health of all services to identify where degradation is occurring.
-- Parallel tool calls are encouraged to speed up data collection, but focus your efforts once a degraded service is identified.
-- Avoid redundant checks on services already confirmed healthy.
+- Parallel tool calls are encouraged to speed up data collection, but focus your efforts
+  once a degraded service is identified.
 - A service reporting healthy or ready does not rule out underlying resource or runtime issues.
-  Health probes reflect availability, not the internal state of resources such as CPU, memory, or thread usage.
-  If other signals suggest a problem, continue investigating even if health reports UP.
-- Metrics and resource readings represent point-in-time snapshots. A single reading is not
-  sufficient to characterise resource behaviour. When a metric reading appears abnormal,
-  collect repeated observations across separate tool calls before drawing conclusions about
-  the nature or severity of the issue.
-- Base your diagnosis on evidence that is consistent across multiple observations, not on
-  a single data point. Transient spikes and gradual trends require different conclusions
-  and both require more than one reading to distinguish.
-- Once you have identified a root cause supported by consistent evidence across your
-  investigation, use submit_diagnosis.
-- If all services appear healthy after thorough inspection, submit a diagnosis with no_fault_detected=True.
+  Health probes reflect availability, not the internal state of resources such as CPU, memory,
+  or thread usage. If other signals suggest a problem, continue investigating even if health
+  reports UP.
+- Resource metrics are point-in-time snapshots. A single reading tells you current state,
+  not trajectory. Collect multiple observations over time to distinguish a stable system
+  from one that is gradually degrading.
+- Exhaust the available signals for the affected service before submitting a diagnosis.
+  A thorough investigation considers all dimensions of the fault — not just the first
+  anomaly found.
+- Avoid unnecessary repeat observations once a signal is clearly stable or clearly
+  anomalous. Investigate purposefully.
+- Once you have identified a root cause with consistent supporting evidence, use
+  submit_diagnosis.
+- If all services appear healthy after thorough inspection, submit a diagnosis with
+  no_fault_detected=True.
 
 ## Diagnosis Submission Requirements
 When calling submit_diagnosis, provide the following:
   - service, component, fault_type: Select the most accurate values from the provided enums.
-  - evidence: A concise summary of the logs, metrics, or events that support your conclusion (min 80 characters).
-    Evidence must reflect your full investigation, not a single isolated reading.
-  - no_fault_detected: Set to True ONLY if all services are verified healthy. If True, set service, component, and fault_type to None.
+  - evidence: A concise summary of the signals that support your conclusion (min 80 characters).
+    Evidence must reflect breadth of investigation — multiple observations, multiple signal
+    types — not a single isolated reading.
+  - no_fault_detected: Set to True ONLY if all services are verified healthy across all
+    available signals. If True, set service, component, and fault_type to None.
 """

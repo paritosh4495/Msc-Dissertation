@@ -58,16 +58,21 @@ def query_actuator_metrics(
     metric_name: Optional[str] = None,
 ) -> dict:
     """
-      Queries real-time application metrics from Spring Boot Actuator.
+    Queries real-time application metrics from Spring Boot Actuator.
     If 'metric_name' is omitted, it returns a list of all available metric names.
     If 'metric_name' is provided, it returns the current value and available tags for that metric.
     
-    Commonly useful metrics:
-    - hikaricp.connections.active/pending/timeout: For identifying connection pool saturation.
-    - jvm.memory.used: For identifying memory pressure or gradual heap growth.
-    - jvm.threads.states: For identifying thread-pool exhaustion (check for high BLOCKED or WAITING counts).
-    - process.cpu.usage: For identifying high CPU load.
-    - resilience4j.circuitbreaker.state: For checking the current circuit breaker state.
+      Commonly useful metrics:
+    - hikaricp.connections.active/pending/timeout: Connection pool saturation.
+    - jvm.memory.used: Heap usage as % of JVM heap limit (-Xmx).
+    - jvm.gc.pause: GC pause durations (count and total time)
+    - jvm.threads.states: Per-state thread breakdown (runnable, blocked, waiting,
+      timed-waiting, new, terminated). High BLOCKED indicates contention.
+    - process.cpu.usage: CPU as % of one core.
+    - resilience4j.circuitbreaker.state: Current circuit breaker state.
+
+    If unsure which metrics are available, call with metric_name omitted first
+    to discover the full list exposed by the service
     """
     tool_name = "query_actuator_metrics"
 
@@ -156,6 +161,34 @@ def query_actuator_metrics(
                             JVM_HEAP_MAX_BYTES,
                         }]
                         break
+            elif metric_name.strip() == "jvm.threads.states":
+                # Raw call retruns total only. Fetch per-state breakdown via tags and assemble into a diagnostic breakdown.
+                states = [
+                    "runnable", "blocked", "waiting", "timed-waiting",
+                    "terminated", "new"
+                ]
+                breakdown = {}
+
+                for state in states:
+                    try:
+                        r = actuator_get(
+                            service,
+                            f"/actuator/metrics/jvm.threads.states?tag=state:{state}"
+                        )
+                        for m in r.get("measurements", []):
+                            if m.get("statistic") == "VALUE":
+                                breakdown[state] = int(m["value"])
+                                break
+                    except Exception:
+                        breakdown[
+                            state] = None  # If any state query fails, set to None to indicate partial data
+
+                total = sum(v for v in breakdown.values() if v is not None)
+                normalised_measurements = [{
+                    "statistic": "VALUE",
+                    "value": total,
+                    "breakdown_by_state": breakdown
+                }]
 
             return make_tool_response(
                 tool=tool_name,
