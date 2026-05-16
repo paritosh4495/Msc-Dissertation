@@ -59,3 +59,5 @@ __pycache__/
 /Agent_Impl/myVenv
 /Agent_Impl/.env
 /Agent_Impl/smoke_test_results
+/Agent_Impl/trial_results
+/Agent_Impl/smoke_test_results/**
