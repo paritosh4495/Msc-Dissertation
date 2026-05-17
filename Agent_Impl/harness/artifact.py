@@ -16,7 +16,7 @@ from typing import Any, Optional
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from harness.fault_catalogue import GroundTruth, get_ground_truth
-from harness.harness_config import PRICE_PER_1K_INPUT_TOKENS, PRICE_PER_1K_OUTPUT_TOKENS
+from harness.harness_config import PRICE_PER_1M_INPUT_TOKENS, PRICE_PER_1M_OUTPUT_TOKENS
 from harness.progress import TrialSpec
 from harness.materialisation import MaterialisationLog
 
@@ -256,8 +256,8 @@ def _extract_token_usage(messages: list[BaseMessage]) -> dict:
         }
 
     total = total_input + total_output
-    cost = ((total_input / 1000.0) * PRICE_PER_1K_INPUT_TOKENS +
-            (total_output / 1000.0) * PRICE_PER_1K_OUTPUT_TOKENS)
+    cost = ((total_input / 1000000.0) * PRICE_PER_1M_INPUT_TOKENS +
+            (total_output / 1000000.0) * PRICE_PER_1M_OUTPUT_TOKENS)
     return {
         "prompt_tokens": total_input,
         "completion_tokens": total_output,
