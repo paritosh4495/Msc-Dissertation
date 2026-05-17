@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from harness.fault_catalogue import GroundTruth, get_ground_truth
 from harness.harness_config import PRICE_PER_1K_INPUT_TOKENS, PRICE_PER_1K_OUTPUT_TOKENS
 from harness.progress import TrialSpec
-from materialisation import MaterialisationLog
+from harness.materialisation import MaterialisationLog
 
 logger = logging.getLogger(__name__)
 
