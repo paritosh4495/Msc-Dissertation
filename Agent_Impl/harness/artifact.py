@@ -26,17 +26,23 @@ logger = logging.getLogger(__name__)
 
 # EC  = Exact Correct        — all three fields match ground truth
 # PC  = Partial Correct      — at least one but not all fields match
+# SC = Service Correct       — only service correct
+# CC = Component Correct     — only component correct
+# FC = Fault Type Correct    — only fault_type correct
 # WD  = Wrong Diagnosis      — submitted but all fields wrong
 # NFD = No Fault Detected    — agent said no fault; fault was active
-# NS  = No Submission        — agent never called submit_diagnosis
+# FF  = Format Failure       — submission failed to meet required format
 # SL  = Step Limit           — hit max steps without submitting
 
 OUTCOME_EC = "EC"
 OUTCOME_PC = "PC"
+OUTCOME_SC = "SC"
+OUTCOME_CC = "CC"
+OUTCOME_FC = "FC"
 OUTCOME_WD = "WD"
 OUTCOME_NFD = "NFD"
-OUTCOME_NS = "NS"
 OUTCOME_SL = "SL"
+OUTCOME_FF = "FF"
 
 # Public entry point
 
@@ -278,7 +284,7 @@ def _determine_termination(terminated: bool,
                    None)
     if last_ai is not None and not last_ai.tool_calls:
         return "step_limit"
-    return "no_submission"
+    return "format_failure"
 
 
 def _build_session_summary(
@@ -357,6 +363,10 @@ def _build_diagnosis(
     }
 
 
+def _norm(s):
+    return s.strip().lower() if s else ""
+
+
 def _score(
     submission: Optional[dict],
     ground_truth: GroundTruth,
@@ -364,26 +374,9 @@ def _score(
 ) -> dict:
     """
     Score the agent's submission against ground truth.
-
-    THREE INDEPENDENT BOOLEAN METRICS:
-      service_correct, component_correct, fault_type_correct.
-      Scored independently so partial credit analysis is possible.
-
-    COMPOSITE METRIC:
-      exact_correct = True only if ALL THREE are correct.
-      This is the primary RQ1 metric.
-
-    PARTIAL SCORE:
-      Float 0.0–1.0 = (number correct) / 3.
-      Allows finer-grained accuracy analysis than a binary correct/wrong.
-
     OUTCOME CATEGORY:
-      EC  — Exact Correct (all three match)
-      PC  — Partial Correct (at least one match, not all)
-      WD  — Wrong Diagnosis (submitted, all three wrong)
-      NFD — No Fault Detected (agent declared no fault)
-      NS  — No Submission (agent never submitted)
-      SL  — Step Limit reached without submission
+    EC,
+    PC, SC, CC, FC, WD, NFD, SL, FF
     """
     gt = {
         "service": ground_truth.service,
@@ -393,7 +386,7 @@ def _score(
 
     # Handle no-submission outcomes first.
     if submission is None:
-        outcome = OUTCOME_SL if termination == "step_limit" else OUTCOME_NS
+        outcome = OUTCOME_SL if termination == "step_limit" else OUTCOME_FF
         return {
             "ground_truth": gt,
             "service_correct": None,
@@ -417,10 +410,12 @@ def _score(
         }
 
     # Normal scoring path.
-    service_correct = submission.get("service") == ground_truth.service
-    component_correct = submission.get("component") == ground_truth.component
-    fault_type_correct = submission.get(
-        "fault_type") == ground_truth.fault_type
+    service_correct = _norm(submission.get("service")) == _norm(
+        ground_truth.service)
+    component_correct = _norm(submission.get("component")) == _norm(
+        ground_truth.component)
+    fault_type_correct = _norm(submission.get("fault_type")) == _norm(
+        ground_truth.fault_type)
     exact_correct = service_correct and component_correct and fault_type_correct
 
     correct_count = sum(
@@ -429,8 +424,12 @@ def _score(
 
     if exact_correct:
         outcome = OUTCOME_EC
-    elif correct_count > 0:
-        outcome = OUTCOME_PC
+    elif correct_count == 2:
+        outcome = OUTCOME_PC  # exactly two correct
+    elif correct_count == 1:
+        if service_correct: outcome = OUTCOME_SC
+        elif component_correct: outcome = OUTCOME_CC
+        else: outcome = OUTCOME_FC  # only fault_type correct
     else:
         outcome = OUTCOME_WD
 
