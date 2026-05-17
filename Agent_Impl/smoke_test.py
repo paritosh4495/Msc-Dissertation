@@ -182,6 +182,33 @@ def dump_session_to_json(state: dict,
     print(f"\n[smoke] Session dumped → {path}")
 
 
+def dump_raw_state_to_json(state: dict, path: str = "raw.json") -> None:
+    """Dump the complete raw agent state to JSON."""
+
+    def make_json_safe(obj):
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+
+        if isinstance(obj, list):
+            return [make_json_safe(x) for x in obj]
+
+        if isinstance(obj, dict):
+            return {str(k): make_json_safe(v) for k, v in obj.items()}
+
+        # LangChain messages usually support this
+        if hasattr(obj, "model_dump"):
+            return make_json_safe(obj.model_dump())
+
+        # fallback for non-serialisable objects
+        return str(obj)
+
+    raw = make_json_safe(state)
+
+    Path(path).write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    print(f"\n[smoke] Raw state dumped → {path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="End-to-end agent smoke test")
     parser.add_argument(
@@ -193,3 +220,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     final_state = run_smoke_test(args.condition)
     dump_session_to_json(final_state, args.condition, path="smoke_output.json")
+    dump_raw_state_to_json(final_state, path="raw.json")
